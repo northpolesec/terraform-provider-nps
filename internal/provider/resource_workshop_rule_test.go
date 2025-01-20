@@ -14,14 +14,13 @@ func TestAccWorkshopRule(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck: func() {
 			testAccPreCheck(t)
-			os.Setenv("NPS_ENDPOINT", "http://localhost:8080")
-			os.Setenv("NPS_API_KEY", "~~UISERVER~~")
+			os.Setenv("NPS_ENDPOINT", "localhost:8080")
 		},
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			// Create and Read testing
 			{
-				Config: testAccExampleResourceConfig("yes", "platform:com.apple.yes", "SIGNINGID", "BLOCKLIST"),
+				Config: testAccExampleRuleResourceConfig("yes", "platform:com.apple.yes", "SIGNINGID", "BLOCKLIST"),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("nps_workshop_rule.yes", "identifier", "platform:com.apple.yes"),
 					resource.TestCheckResourceAttr("nps_workshop_rule.yes", "rule_type", "SIGNINGID"),
@@ -33,7 +32,7 @@ func TestAccWorkshopRule(t *testing.T) {
 	})
 }
 
-func testAccExampleResourceConfig(name, identifier, ruleType, policy string) string {
+func testAccExampleRuleResourceConfig(name, identifier, ruleType, policy string) string {
 	return fmt.Sprintf(`
 resource "nps_workshop_rule" %[1]q {
   identifier = %[2]q

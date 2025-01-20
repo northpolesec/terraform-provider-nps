@@ -3,12 +3,8 @@
 package provider
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -17,9 +13,9 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
-	"google.golang.org/protobuf/encoding/protojson"
 
 	syncpb "buf.build/gen/go/northpolesec/protos/protocolbuffers/go/sync"
+	svcpb "buf.build/gen/go/northpolesec/workshop-api/grpc/go/workshop/v1/workshopv1grpc"
 	apipb "buf.build/gen/go/northpolesec/workshop-api/protocolbuffers/go/workshop/v1"
 )
 
@@ -33,8 +29,7 @@ func NewRuleResource() resource.Resource {
 
 // RuleResource defines the resource implementation.
 type RuleResource struct {
-	client   *http.Client
-	endpoint string
+	client svcpb.WorkshopServiceClient
 }
 
 // RuleResourceModel describes the resource data model.
@@ -97,7 +92,6 @@ func (r *RuleResource) Configure(ctx context.Context, req resource.ConfigureRequ
 	}
 
 	r.client = pd.Client
-	r.endpoint = pd.Endpoint
 }
 
 func (r *RuleResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
@@ -113,52 +107,23 @@ func (r *RuleResource) Create(ctx context.Context, req resource.CreateRequest, r
 	ruleType := syncpb.RuleType_value[data.RuleType.ValueString()]
 	rulePolicy := syncpb.Policy_value[data.Policy.ValueString()]
 
-	rule := &apipb.CreateRuleRequest{
+	crResp, err := r.client.CreateRule(ctx, &apipb.CreateRuleRequest{
 		Rule: &apipb.Rule{
 			Identifier: data.Identifier.ValueString(),
 			RuleType:   syncpb.RuleType(ruleType),
 			Policy:     syncpb.Policy(rulePolicy),
 		},
-	}
-	ruleJson, err := json.Marshal(&rule)
-	if err != nil {
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Failed to marshal CreateRuleRequest: %v", err))
-	}
-
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", fmt.Sprintf("%s/api/v1/rules", r.endpoint), bytes.NewReader(ruleJson))
-	if err != nil {
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to create HTTP request, got error: %s", err))
-		return
-	}
-
-	httpResp, err := r.client.Do(httpReq)
+	})
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Failed to create rule: %v", err))
 		return
 	}
-	if httpResp.StatusCode != 200 {
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Failed to create rule. HTTP status: %d", httpResp.StatusCode))
-		return
-	}
-
-	body, err := io.ReadAll(httpResp.Body)
-	if err != nil {
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Failed to read body from HTTP response: %v", err))
-	}
-
-	tflog.Info(ctx, fmt.Sprintf("Response body: %v", string(body)))
-
-	createRuleResponse := &apipb.CreateRuleResponse{}
-	if err := protojson.Unmarshal(body, createRuleResponse); err != nil {
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Failed to unmarshal CreateRuleResponse: %v", err))
-		return
-	}
-	if createRuleResponse.GetRuleId() == "" {
+	if crResp.GetRuleId() == "" {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Failed to get rule ID for new rule"))
 		return
 	}
 
-	data.Id = types.StringValue(createRuleResponse.GetRuleId())
+	data.Id = types.StringValue(crResp.GetRuleId())
 	tflog.Info(ctx, fmt.Sprintf("Created rule: %q", data.Id))
 
 	// Save data into Terraform state
@@ -211,19 +176,11 @@ func (r *RuleResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 		return
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "DELETE", fmt.Sprintf("%s/api/v1/rules/%s", r.endpoint, data.Id.ValueString()), nil)
-	if err != nil {
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to create HTTP request, got error: %s", err))
-		return
-	}
-
-	httpResp, err := r.client.Do(httpReq)
+	_, err := r.client.DeleteRule(ctx, &apipb.DeleteRuleRequest{
+		RuleId: data.Id.ValueString(),
+	})
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Failed to delete rule: %v", err))
-		return
-	}
-	if httpResp.StatusCode != 200 {
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Failed to delete rule. HTTP status: %d", httpResp.StatusCode))
 		return
 	}
 }

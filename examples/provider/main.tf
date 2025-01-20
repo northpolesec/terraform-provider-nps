@@ -10,5 +10,5 @@ terraform {
 }
 
 provider "nps" {
-  endpoint = "http://localhost:8080"
+  endpoint = "localhost:8080"
 }
