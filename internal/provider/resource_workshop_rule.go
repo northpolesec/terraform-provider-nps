@@ -109,28 +109,10 @@ func (r *RuleResource) Create(ctx context.Context, req resource.CreateRequest, r
 		return
 	}
 
-	ruleType := syncpb.RuleType_value[data.RuleType.ValueString()]
-	rulePolicy := syncpb.Policy_value[data.Policy.ValueString()]
-
-	crResp, err := r.client.CreateRule(ctx, &apipb.CreateRuleRequest{
-		Rule: &apipb.Rule{
-			Identifier: data.Identifier.ValueString(),
-			RuleType:   syncpb.RuleType(ruleType),
-			Policy:     syncpb.Policy(rulePolicy),
-			HostId:     data.HostID.ValueString(),
-		},
-	})
-	if err != nil {
+	if err := createRule(ctx, r.client, &data); err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Failed to create rule: %v", err))
 		return
 	}
-	if crResp.GetRuleId() == "" {
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Failed to get rule ID for new rule"))
-		return
-	}
-
-	data.Id = types.StringValue(crResp.GetRuleId())
-	tflog.Info(ctx, fmt.Sprintf("Created rule: %q", data.Id))
 
 	// Save data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
@@ -176,27 +158,11 @@ func (r *RuleResource) Update(ctx context.Context, req resource.UpdateRequest, r
 		return
 	}
 
-	ruleType := syncpb.RuleType_value[data.RuleType.ValueString()]
-	rulePolicy := syncpb.Policy_value[data.Policy.ValueString()]
-
-	crResp, err := r.client.CreateRule(ctx, &apipb.CreateRuleRequest{
-		Rule: &apipb.Rule{
-			Identifier: data.Identifier.ValueString(),
-			RuleType:   syncpb.RuleType(ruleType),
-			Policy:     syncpb.Policy(rulePolicy),
-			HostId:     data.HostID.ValueString(),
-		},
-	})
-	if err != nil {
+	if err := createRule(ctx, r.client, &data); err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Failed to create rule: %v", err))
 		return
 	}
-	if crResp.GetRuleId() == "" {
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Failed to get rule ID for new rule"))
-		return
-	}
 
-	data.Id = types.StringValue(crResp.GetRuleId())
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
@@ -221,4 +187,23 @@ func (r *RuleResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 
 func (r *RuleResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+}
+
+func createRule(ctx context.Context, client svcpb.WorkshopServiceClient, data *RuleResourceModel) error {
+	ruleType := syncpb.RuleType_value[data.RuleType.ValueString()]
+	rulePolicy := syncpb.Policy_value[data.Policy.ValueString()]
+
+	crResp, err := client.CreateRule(ctx, &apipb.CreateRuleRequest{
+		Rule: &apipb.Rule{
+			Identifier: data.Identifier.ValueString(),
+			RuleType:   syncpb.RuleType(ruleType),
+			Policy:     syncpb.Policy(rulePolicy),
+			HostId:     data.HostID.ValueString(),
+		},
+	})
+	if err == nil {
+		data.Id = types.StringValue(crResp.GetRuleId())
+		tflog.Info(ctx, fmt.Sprintf("Created rule: %q", data.Id))
+	}
+	return err
 }
