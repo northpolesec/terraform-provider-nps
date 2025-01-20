@@ -37,6 +37,7 @@ type RuleResourceModel struct {
 	Identifier types.String `tfsdk:"identifier"`
 	RuleType   types.String `tfsdk:"rule_type"`
 	Policy     types.String `tfsdk:"policy"`
+	HostID     types.String `tfsdk:"host_id"`
 
 	Id types.String `tfsdk:"id"`
 }
@@ -62,6 +63,10 @@ func (r *RuleResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 			"policy": schema.StringAttribute{
 				MarkdownDescription: "The policy for this rule",
 				Required:            true,
+			},
+			"host_id": schema.StringAttribute{
+				MarkdownDescription: "The host ID to apply to this rule. If unspecified the rule will be global",
+				Optional:            true,
 			},
 
 			// Computed value, returned from Create
@@ -112,6 +117,7 @@ func (r *RuleResource) Create(ctx context.Context, req resource.CreateRequest, r
 			Identifier: data.Identifier.ValueString(),
 			RuleType:   syncpb.RuleType(ruleType),
 			Policy:     syncpb.Policy(rulePolicy),
+			HostId:     data.HostID.ValueString(),
 		},
 	})
 	if err != nil {
@@ -162,7 +168,35 @@ func (r *RuleResource) Update(ctx context.Context, req resource.UpdateRequest, r
 		return
 	}
 
-	// Save updated data into Terraform state
+	_, err := r.client.DeleteRule(ctx, &apipb.DeleteRuleRequest{
+		RuleId: data.Identifier.ValueString(),
+	})
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Failed to delete existing rule: %v", err))
+		return
+	}
+
+	ruleType := syncpb.RuleType_value[data.RuleType.ValueString()]
+	rulePolicy := syncpb.Policy_value[data.Policy.ValueString()]
+
+	crResp, err := r.client.CreateRule(ctx, &apipb.CreateRuleRequest{
+		Rule: &apipb.Rule{
+			Identifier: data.Identifier.ValueString(),
+			RuleType:   syncpb.RuleType(ruleType),
+			Policy:     syncpb.Policy(rulePolicy),
+			HostId:     data.HostID.ValueString(),
+		},
+	})
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Failed to create rule: %v", err))
+		return
+	}
+	if crResp.GetRuleId() == "" {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Failed to get rule ID for new rule"))
+		return
+	}
+
+	data.Id = types.StringValue(crResp.GetRuleId())
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
