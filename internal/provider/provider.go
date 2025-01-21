@@ -7,7 +7,6 @@ import (
 	"crypto/tls"
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/function"
@@ -38,6 +37,7 @@ type NPSProvider struct {
 type NPSProviderModel struct {
 	Endpoint types.String `tfsdk:"endpoint"`
 	APIKey   types.String `tfsdk:"api_key"`
+	Insecure types.Bool   `tfsdk:"insecure"`
 }
 
 type NPSProviderResourceData struct {
@@ -60,6 +60,10 @@ func (p *NPSProvider) Schema(ctx context.Context, req provider.SchemaRequest, re
 				Description: "The API key to use. Can also be supplied using the NPS_API_KEY environment variable.",
 				Optional:    true,
 				Sensitive:   true,
+			},
+			"insecure": schema.BoolAttribute{
+				Description: "Whether to allow non-TLS connections.",
+				Optional:    true,
 			},
 		},
 	}
@@ -97,7 +101,7 @@ func (p *NPSProvider) Configure(ctx context.Context, req provider.ConfigureReque
 	opts := []grpc.DialOption{
 		grpc.WithPerRPCCredentials(apiKeyAuthorizer(apiKey)),
 	}
-	if strings.HasSuffix(endpoint, ":8080") {
+	if data.Insecure.ValueBool() {
 		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	} else {
 		opts = append(opts, grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{})))
