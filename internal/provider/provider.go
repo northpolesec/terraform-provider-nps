@@ -4,7 +4,8 @@ package provider
 
 import (
 	"context"
-	"net/http"
+	"crypto/tls"
+	"fmt"
 	"os"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
@@ -13,6 +14,11 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
+
+	apipb "buf.build/gen/go/northpolesec/workshop-api/grpc/go/workshop/v1/workshopv1grpc"
 )
 
 // Ensure ScaffoldingProvider satisfies various provider interfaces.
@@ -31,11 +37,11 @@ type NPSProvider struct {
 type NPSProviderModel struct {
 	Endpoint types.String `tfsdk:"endpoint"`
 	APIKey   types.String `tfsdk:"api_key"`
+	Insecure types.Bool   `tfsdk:"insecure"`
 }
 
 type NPSProviderResourceData struct {
-	Client   *http.Client
-	Endpoint string
+	Client apipb.WorkshopServiceClient
 }
 
 func (p *NPSProvider) Metadata(ctx context.Context, req provider.MetadataRequest, resp *provider.MetadataResponse) {
@@ -55,31 +61,12 @@ func (p *NPSProvider) Schema(ctx context.Context, req provider.SchemaRequest, re
 				Optional:    true,
 				Sensitive:   true,
 			},
+			"insecure": schema.BoolAttribute{
+				Description: "Whether to allow non-TLS connections.",
+				Optional:    true,
+			},
 		},
 	}
-}
-
-type withHeader struct {
-	http.Header
-	rt http.RoundTripper
-}
-
-func WithHeader(rt http.RoundTripper) withHeader {
-	if rt == nil {
-		rt = http.DefaultTransport
-	}
-	return withHeader{Header: make(http.Header), rt: rt}
-}
-
-func (h withHeader) RoundTrip(req *http.Request) (*http.Response, error) {
-	if len(h.Header) == 0 {
-		return h.rt.RoundTrip(req)
-	}
-	req = req.Clone(req.Context())
-	for k, v := range h.Header {
-		req.Header[k] = v
-	}
-	return h.rt.RoundTrip(req)
 }
 
 func (p *NPSProvider) Configure(ctx context.Context, req provider.ConfigureRequest, resp *provider.ConfigureResponse) {
@@ -111,21 +98,31 @@ func (p *NPSProvider) Configure(ctx context.Context, req provider.ConfigureReque
 		return
 	}
 
-	client := http.DefaultClient
-	rt := WithHeader(client.Transport)
-	rt.Set("Authorization", apiKey)
-	rt.Set("User-Agent", "terraform-provider-nps")
-	client.Transport = rt
+	opts := []grpc.DialOption{
+		grpc.WithPerRPCCredentials(apiKeyAuthorizer(apiKey)),
+	}
+	if data.Insecure.ValueBool() {
+		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	} else {
+		opts = append(opts, grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{})))
+	}
+
+	conn, err := grpc.NewClient(fmt.Sprintf("dns:%s", endpoint), opts...)
+	if err != nil {
+		resp.Diagnostics.AddError("NPS Provider configuration error", fmt.Sprintf("Failed to connect to endpoint: %v", err))
+		return
+	}
+	client := apipb.NewWorkshopServiceClient(conn)
 
 	resp.DataSourceData = client
 	resp.ResourceData = &NPSProviderResourceData{
-		Client:   client,
-		Endpoint: endpoint,
+		Client: client,
 	}
 }
 
 func (p *NPSProvider) Resources(ctx context.Context) []func() resource.Resource {
 	return []func() resource.Resource{
+		NewAPIKeyResource,
 		NewRuleResource,
 	}
 }
@@ -144,4 +141,13 @@ func New(version string) func() provider.Provider {
 			version: version,
 		}
 	}
+}
+
+type apiKeyAuthorizer string
+
+func (k apiKeyAuthorizer) GetRequestMetadata(ctx context.Context, uri ...string) (map[string]string, error) {
+	return map[string]string{"Authorization": string(k)}, nil
+}
+func (k apiKeyAuthorizer) RequireTransportSecurity() bool {
+	return false
 }
