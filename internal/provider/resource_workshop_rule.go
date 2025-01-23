@@ -79,7 +79,7 @@ func (r *RuleResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 				Computed:            true,
 				MarkdownDescription: "The ID of this rule",
 				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
+					stringplanmodifier.RequiresReplace(),
 				},
 			},
 		},
@@ -133,14 +133,6 @@ func (r *RuleResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 		return
 	}
 
-	// If applicable, this is a great opportunity to initialize any necessary
-	// provider client data and make a call using it.
-	// httpResp, err := r.client.Do(httpReq)
-	// if err != nil {
-	//     resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to read example, got error: %s", err))
-	//     return
-	// }
-
 	// Save updated data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
@@ -156,7 +148,7 @@ func (r *RuleResource) Update(ctx context.Context, req resource.UpdateRequest, r
 	}
 
 	_, err := r.client.DeleteRule(ctx, &apipb.DeleteRuleRequest{
-		RuleId: data.Identifier.ValueString(),
+		RuleId: data.Id.ValueString(),
 	})
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Failed to delete existing rule: %v", err))
