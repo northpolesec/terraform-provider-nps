@@ -38,6 +38,7 @@ type RuleResourceModel struct {
 	RuleType   types.String `tfsdk:"rule_type"`
 	Policy     types.String `tfsdk:"policy"`
 	HostID     types.String `tfsdk:"host_id"`
+	Comment    types.String `tfsdk:"comment"`
 
 	Id types.String `tfsdk:"id"`
 }
@@ -66,6 +67,10 @@ func (r *RuleResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 			},
 			"host_id": schema.StringAttribute{
 				MarkdownDescription: "The host ID to apply to this rule. If unspecified the rule will be global",
+				Optional:            true,
+			},
+			"comment": schema.StringAttribute{
+				MarkdownDescription: "A comment to add to this rule",
 				Optional:            true,
 			},
 
@@ -199,6 +204,7 @@ func createRule(ctx context.Context, client svcpb.WorkshopServiceClient, data *R
 			RuleType:   syncpb.RuleType(ruleType),
 			Policy:     syncpb.Policy(rulePolicy),
 			HostId:     data.HostID.ValueString(),
+			Comment:    data.Comment.ValueString(),
 		},
 	})
 	if err == nil {
