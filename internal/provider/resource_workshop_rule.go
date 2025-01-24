@@ -37,6 +37,8 @@ type RuleResourceModel struct {
 	Identifier types.String `tfsdk:"identifier"`
 	RuleType   types.String `tfsdk:"rule_type"`
 	Policy     types.String `tfsdk:"policy"`
+	HostID     types.String `tfsdk:"host_id"`
+	Comment    types.String `tfsdk:"comment"`
 
 	Id types.String `tfsdk:"id"`
 }
@@ -63,13 +65,21 @@ func (r *RuleResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 				MarkdownDescription: "The policy for this rule",
 				Required:            true,
 			},
+			"host_id": schema.StringAttribute{
+				MarkdownDescription: "The host ID to apply to this rule. If unspecified the rule will be global",
+				Optional:            true,
+			},
+			"comment": schema.StringAttribute{
+				MarkdownDescription: "A comment to add to this rule",
+				Optional:            true,
+			},
 
 			// Computed value, returned from Create
 			"id": schema.StringAttribute{
 				Computed:            true,
 				MarkdownDescription: "The ID of this rule",
 				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
+					stringplanmodifier.RequiresReplace(),
 				},
 			},
 		},
@@ -104,27 +114,10 @@ func (r *RuleResource) Create(ctx context.Context, req resource.CreateRequest, r
 		return
 	}
 
-	ruleType := syncpb.RuleType_value[data.RuleType.ValueString()]
-	rulePolicy := syncpb.Policy_value[data.Policy.ValueString()]
-
-	crResp, err := r.client.CreateRule(ctx, &apipb.CreateRuleRequest{
-		Rule: &apipb.Rule{
-			Identifier: data.Identifier.ValueString(),
-			RuleType:   syncpb.RuleType(ruleType),
-			Policy:     syncpb.Policy(rulePolicy),
-		},
-	})
-	if err != nil {
+	if err := createRule(ctx, r.client, &data); err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Failed to create rule: %v", err))
 		return
 	}
-	if crResp.GetRuleId() == "" {
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Failed to get rule ID for new rule"))
-		return
-	}
-
-	data.Id = types.StringValue(crResp.GetRuleId())
-	tflog.Info(ctx, fmt.Sprintf("Created rule: %q", data.Id))
 
 	// Save data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
@@ -140,14 +133,6 @@ func (r *RuleResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 		return
 	}
 
-	// If applicable, this is a great opportunity to initialize any necessary
-	// provider client data and make a call using it.
-	// httpResp, err := r.client.Do(httpReq)
-	// if err != nil {
-	//     resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to read example, got error: %s", err))
-	//     return
-	// }
-
 	// Save updated data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
@@ -162,7 +147,19 @@ func (r *RuleResource) Update(ctx context.Context, req resource.UpdateRequest, r
 		return
 	}
 
-	// Save updated data into Terraform state
+	_, err := r.client.DeleteRule(ctx, &apipb.DeleteRuleRequest{
+		RuleId: data.Id.ValueString(),
+	})
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Failed to delete existing rule: %v", err))
+		return
+	}
+
+	if err := createRule(ctx, r.client, &data); err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Failed to create rule: %v", err))
+		return
+	}
+
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
@@ -187,4 +184,24 @@ func (r *RuleResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 
 func (r *RuleResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+}
+
+func createRule(ctx context.Context, client svcpb.WorkshopServiceClient, data *RuleResourceModel) error {
+	ruleType := syncpb.RuleType_value[data.RuleType.ValueString()]
+	rulePolicy := syncpb.Policy_value[data.Policy.ValueString()]
+
+	crResp, err := client.CreateRule(ctx, &apipb.CreateRuleRequest{
+		Rule: &apipb.Rule{
+			Identifier: data.Identifier.ValueString(),
+			RuleType:   syncpb.RuleType(ruleType),
+			Policy:     syncpb.Policy(rulePolicy),
+			HostId:     data.HostID.ValueString(),
+			Comment:    data.Comment.ValueString(),
+		},
+	})
+	if err == nil {
+		data.Id = types.StringValue(crResp.GetRuleId())
+		tflog.Info(ctx, fmt.Sprintf("Created rule: %q", data.Id))
+	}
+	return err
 }
