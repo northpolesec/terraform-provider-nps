@@ -68,11 +68,11 @@ func (r *RuleResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 				Required:            true,
 			},
 			"group_id": schema.StringAttribute{
-				MarkdownDescription: "The group ID to apply to this rule. If host_id is set, group_id will be ignored. If both group_id and host_id are unspecified the rule will be global",
+				MarkdownDescription: "The group ID to apply to this rule. If both group_id and host_id are unspecified the rule will be global. It is an error to set both host_id and group_id.",
 				Optional:            true,
 			},
 			"host_id": schema.StringAttribute{
-				MarkdownDescription: "The host ID to apply to this rule. If both group_id and host_id are unspecified the rule will be global",
+				MarkdownDescription: "The host ID to apply to this rule. If both group_id and host_id are unspecified the rule will be global. It is an error to set both host_id and group_id.",
 				Optional:            true,
 			},
 			"comment": schema.StringAttribute{
