@@ -217,26 +217,26 @@ func createRule(ctx context.Context, client svcpb.WorkshopServiceClient, data *R
 }
 
 func setScope(r *apipb.Rule, groupID, hostID string) error {
-	if hostID != "" && groupID != "" {
-		return errors.New("group_id and host_id can not both be set")
-	}
-	if hostID != "" {
+	switch {
+	case hostID != "" && groupID != "":
+		return errors.New("group_id and host_id are mutually exclusive")
+	case hostID != "":
 		r.Scope = &apipb.Rule_Host{
 			Host: &apipb.Rule_ScopeHost{
 				HostId: hostID,
 			},
 		}
 		return nil
-	} else if groupID != "" {
+	case groupID != "":
 		r.Scope = &apipb.Rule_Group{
 			Group: &apipb.Rule_ScopeGroup{
 				GroupId: groupID,
 			},
 		}
-		return nil
-	}
-	r.Scope = &apipb.Rule_Global{
-		Global: &apipb.Rule_ScopeGlobal{},
+	default:
+		r.Scope = &apipb.Rule_Global{
+			Global: &apipb.Rule_ScopeGlobal{},
+		}
 	}
 	return nil
 }
