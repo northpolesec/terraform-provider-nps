@@ -4,7 +4,6 @@ package provider
 
 import (
 	"fmt"
-	"os"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
@@ -14,17 +13,35 @@ func TestAccWorkshopRule(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck: func() {
 			testAccPreCheck(t)
-			os.Setenv("NPS_ENDPOINT", "localhost:8080")
 		},
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			// Create and Read testing
 			{
-				Config: testAccExampleRuleResourceConfig("yes", "platform:com.apple.yes", "SIGNINGID", "BLOCKLIST"),
+				Config: testAccExampleRuleResourceConfig("yes", "platform:com.apple.yes", "SIGNINGID", "BLOCKLIST", "", "", "block yes"),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("nps_workshop_rule.yes", "identifier", "platform:com.apple.yes"),
 					resource.TestCheckResourceAttr("nps_workshop_rule.yes", "rule_type", "SIGNINGID"),
 					resource.TestCheckResourceAttr("nps_workshop_rule.yes", "policy", "BLOCKLIST"),
+					resource.TestCheckResourceAttr("nps_workshop_rule.yes", "comment", "block yes"),
+				),
+			},
+			{
+				Config: testAccExampleRuleResourceConfig("yes", "platform:com.apple.yes", "SIGNINGID", "BLOCKLIST", "group123", "", ""),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("nps_workshop_rule.yes", "identifier", "platform:com.apple.yes"),
+					resource.TestCheckResourceAttr("nps_workshop_rule.yes", "rule_type", "SIGNINGID"),
+					resource.TestCheckResourceAttr("nps_workshop_rule.yes", "policy", "BLOCKLIST"),
+					resource.TestCheckResourceAttr("nps_workshop_rule.yes", "group_id", "group123"),
+				),
+			},
+			{
+				Config: testAccExampleRuleResourceConfig("yes", "platform:com.apple.yes", "SIGNINGID", "BLOCKLIST", "", "host123", ""),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("nps_workshop_rule.yes", "identifier", "platform:com.apple.yes"),
+					resource.TestCheckResourceAttr("nps_workshop_rule.yes", "rule_type", "SIGNINGID"),
+					resource.TestCheckResourceAttr("nps_workshop_rule.yes", "policy", "BLOCKLIST"),
+					resource.TestCheckResourceAttr("nps_workshop_rule.yes", "host_id", "host123"),
 				),
 			},
 			// Delete testing automatically occurs in TestCase
@@ -32,12 +49,20 @@ func TestAccWorkshopRule(t *testing.T) {
 	})
 }
 
-func testAccExampleRuleResourceConfig(name, identifier, ruleType, policy string) string {
+func testAccExampleRuleResourceConfig(name, identifier, ruleType, policy, groupID, hostID, comment string) string {
 	return fmt.Sprintf(`
+provider "nps" {
+  endpoint = "localhost:8080"
+	insecure = true
+}
+
 resource "nps_workshop_rule" %[1]q {
   identifier = %[2]q
   rule_type  = %[3]q
   policy     = %[4]q
+	group_id   = %[5]q
+	host_id    = %[6]q
+	comment    = %[7]q
 }
-`, name, identifier, ruleType, policy)
+`, name, identifier, ruleType, policy, groupID, hostID, comment)
 }

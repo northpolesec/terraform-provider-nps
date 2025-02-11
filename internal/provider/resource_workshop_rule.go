@@ -4,6 +4,7 @@ package provider
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -37,6 +38,7 @@ type RuleResourceModel struct {
 	Identifier types.String `tfsdk:"identifier"`
 	RuleType   types.String `tfsdk:"rule_type"`
 	Policy     types.String `tfsdk:"policy"`
+	GroupID    types.String `tfsdk:"group_id"`
 	HostID     types.String `tfsdk:"host_id"`
 	Comment    types.String `tfsdk:"comment"`
 
@@ -65,8 +67,12 @@ func (r *RuleResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 				MarkdownDescription: "The policy for this rule",
 				Required:            true,
 			},
+			"group_id": schema.StringAttribute{
+				MarkdownDescription: "The group ID to apply to this rule. If both group_id and host_id are unspecified the rule will be global. It is an error to set both host_id and group_id.",
+				Optional:            true,
+			},
 			"host_id": schema.StringAttribute{
-				MarkdownDescription: "The host ID to apply to this rule. If unspecified the rule will be global",
+				MarkdownDescription: "The host ID to apply to this rule. If both group_id and host_id are unspecified the rule will be global. It is an error to set both host_id and group_id.",
 				Optional:            true,
 			},
 			"comment": schema.StringAttribute{
@@ -190,18 +196,47 @@ func createRule(ctx context.Context, client svcpb.WorkshopServiceClient, data *R
 	ruleType := syncpb.RuleType_value[data.RuleType.ValueString()]
 	rulePolicy := syncpb.Policy_value[data.Policy.ValueString()]
 
+	rule := &apipb.Rule{
+		Identifier: data.Identifier.ValueString(),
+		RuleType:   syncpb.RuleType(ruleType),
+		Policy:     syncpb.Policy(rulePolicy),
+		Comment:    data.Comment.ValueString(),
+	}
+	if err := setScope(rule, data.GroupID.ValueString(), data.HostID.ValueString()); err != nil {
+		return err
+	}
+
 	crResp, err := client.CreateRule(ctx, &apipb.CreateRuleRequest{
-		Rule: &apipb.Rule{
-			Identifier: data.Identifier.ValueString(),
-			RuleType:   syncpb.RuleType(ruleType),
-			Policy:     syncpb.Policy(rulePolicy),
-			HostId:     data.HostID.ValueString(),
-			Comment:    data.Comment.ValueString(),
-		},
+		Rule: rule,
 	})
 	if err == nil {
 		data.Id = types.StringValue(crResp.GetRuleId())
 		tflog.Info(ctx, fmt.Sprintf("Created rule: %q", data.Id))
 	}
 	return err
+}
+
+func setScope(r *apipb.Rule, groupID, hostID string) error {
+	switch {
+	case hostID != "" && groupID != "":
+		return errors.New("group_id and host_id are mutually exclusive")
+	case hostID != "":
+		r.Scope = &apipb.Rule_Host{
+			Host: &apipb.Rule_ScopeHost{
+				HostId: hostID,
+			},
+		}
+		return nil
+	case groupID != "":
+		r.Scope = &apipb.Rule_Group{
+			Group: &apipb.Rule_ScopeGroup{
+				GroupId: groupID,
+			},
+		}
+	default:
+		r.Scope = &apipb.Rule_Global{
+			Global: &apipb.Rule_ScopeGlobal{},
+		}
+	}
+	return nil
 }
