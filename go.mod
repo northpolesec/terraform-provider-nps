@@ -3,10 +3,10 @@ module github.com/northpolesec/terraform-provider-nps
 go 1.23.3
 
 require (
-	buf.build/gen/go/northpolesec/protos/protocolbuffers/go v1.36.5-20250205183953-5b8cc4eb768b.1
-	buf.build/gen/go/northpolesec/workshop-api/grpc/go v1.5.1-20250210171133-b0428e4032b4.2
-	buf.build/gen/go/northpolesec/workshop-api/protocolbuffers/go v1.36.5-20250210171133-b0428e4032b4.1
-	github.com/hashicorp/terraform-plugin-framework v1.13.0
+	buf.build/gen/go/northpolesec/protos/protocolbuffers/go v1.36.5-20250214013108-459ace571a4b.1
+	buf.build/gen/go/northpolesec/workshop-api/grpc/go v1.5.1-20250228023657-5e2831ffb76b.2
+	buf.build/gen/go/northpolesec/workshop-api/protocolbuffers/go v1.36.5-20250228023657-5e2831ffb76b.1
+	github.com/hashicorp/terraform-plugin-framework v1.14.1
 	github.com/hashicorp/terraform-plugin-go v0.26.0
 	github.com/hashicorp/terraform-plugin-log v0.9.0
 	github.com/hashicorp/terraform-plugin-testing v1.11.0
@@ -63,7 +63,7 @@ require (
 	golang.org/x/text v0.22.0 // indirect
 	golang.org/x/tools v0.21.1-0.20240508182429-e35e4ccd0d2d // indirect
 	google.golang.org/appengine v1.6.8 // indirect
-	google.golang.org/genproto/googleapis/api v0.0.0-20250207221924-e9438ea467c6 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20250207221924-e9438ea467c6 // indirect
+	google.golang.org/genproto/googleapis/api v0.0.0-20250227231956-55c901821b1e // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20250227231956-55c901821b1e // indirect
 	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
 )

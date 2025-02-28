@@ -100,7 +100,7 @@ func (r *APIKeyResource) Create(ctx context.Context, req resource.CreateRequest,
 	}
 
 	ckResp, err := r.client.CreateAPIKey(ctx, &apipb.CreateAPIKeyRequest{
-		KeyId:    data.Name.ValueString(),
+		Name:     data.Name.ValueString(),
 		Role:     data.Role.ValueString(),
 		Lifetime: durationpb.New(24 * 30 * time.Hour), // TODO(rah): Make this configurable
 	})
@@ -159,7 +159,7 @@ func (r *APIKeyResource) Delete(ctx context.Context, req resource.DeleteRequest,
 	}
 
 	_, err := r.client.DeleteAPIKey(ctx, &apipb.DeleteAPIKeyRequest{
-		KeyId: data.Name.ValueString(),
+		Name: data.Name.ValueString(),
 	})
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Failed to delete API key: %v", err))
