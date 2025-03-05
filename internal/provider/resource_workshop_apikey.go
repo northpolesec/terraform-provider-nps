@@ -14,6 +14,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/durationpb"
 
 	svcpb "buf.build/gen/go/northpolesec/workshop-api/grpc/go/workshop/v1/workshopv1grpc"
@@ -99,11 +100,11 @@ func (r *APIKeyResource) Create(ctx context.Context, req resource.CreateRequest,
 		return
 	}
 
-	ckResp, err := r.client.CreateAPIKey(ctx, &apipb.CreateAPIKeyRequest{
-		Name:     data.Name.ValueString(),
-		Role:     data.Role.ValueString(),
+	ckResp, err := r.client.CreateAPIKey(ctx, apipb.CreateAPIKeyRequest_builder{
+		Name:     proto.String(data.Name.ValueString()),
+		Role:     proto.String(data.Role.ValueString()),
 		Lifetime: durationpb.New(24 * 30 * time.Hour), // TODO(rah): Make this configurable
-	})
+	}.Build())
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Failed to create API key: %v", err))
 		return
@@ -158,9 +159,9 @@ func (r *APIKeyResource) Delete(ctx context.Context, req resource.DeleteRequest,
 		return
 	}
 
-	_, err := r.client.DeleteAPIKey(ctx, &apipb.DeleteAPIKeyRequest{
-		Name: data.Name.ValueString(),
-	})
+	_, err := r.client.DeleteAPIKey(ctx, apipb.DeleteAPIKeyRequest_builder{
+		Name: proto.String(data.Name.ValueString()),
+	}.Build())
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Failed to delete API key: %v", err))
 		return

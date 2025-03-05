@@ -4,8 +4,8 @@ go 1.23.3
 
 require (
 	buf.build/gen/go/northpolesec/protos/protocolbuffers/go v1.36.5-20250214013108-459ace571a4b.1
-	buf.build/gen/go/northpolesec/workshop-api/grpc/go v1.5.1-20250228023657-5e2831ffb76b.2
-	buf.build/gen/go/northpolesec/workshop-api/protocolbuffers/go v1.36.5-20250228023657-5e2831ffb76b.1
+	buf.build/gen/go/northpolesec/workshop-api/grpc/go v1.5.1-20250305191827-afa1370c9b36.2
+	buf.build/gen/go/northpolesec/workshop-api/protocolbuffers/go v1.36.5-20250305191827-afa1370c9b36.1
 	github.com/hashicorp/terraform-plugin-framework v1.14.1
 	github.com/hashicorp/terraform-plugin-go v0.26.0
 	github.com/hashicorp/terraform-plugin-log v0.9.0

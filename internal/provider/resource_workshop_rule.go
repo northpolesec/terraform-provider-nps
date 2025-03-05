@@ -13,6 +13,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
+	"google.golang.org/protobuf/proto"
 
 	syncpb "buf.build/gen/go/northpolesec/protos/protocolbuffers/go/sync"
 	svcpb "buf.build/gen/go/northpolesec/workshop-api/grpc/go/workshop/v1/workshopv1grpc"
@@ -147,9 +148,9 @@ func (r *RuleResource) Update(ctx context.Context, req resource.UpdateRequest, r
 		return
 	}
 
-	_, err := r.client.DeleteRule(ctx, &apipb.DeleteRuleRequest{
-		RuleId: data.Id.ValueString(),
-	})
+	_, err := r.client.DeleteRule(ctx, apipb.DeleteRuleRequest_builder{
+		RuleId: proto.String(data.Id.ValueString()),
+	}.Build())
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Failed to delete existing rule: %v", err))
 		return
@@ -173,9 +174,9 @@ func (r *RuleResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 		return
 	}
 
-	_, err := r.client.DeleteRule(ctx, &apipb.DeleteRuleRequest{
-		RuleId: data.Id.ValueString(),
-	})
+	_, err := r.client.DeleteRule(ctx, apipb.DeleteRuleRequest_builder{
+		RuleId: proto.String(data.Id.ValueString()),
+	}.Build())
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Failed to delete rule: %v", err))
 		return
