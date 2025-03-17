@@ -8,9 +8,18 @@ on:
 jobs:
   format-and-test:
     runs-on: ubuntu-latest
+    env:
+      GOPRIVATE: buf.build/gen/go
     steps:
       - name: Checkout
         uses: actions/checkout@eef61447b9ff4aafe5dcd4e0bbf5d482be7e7871 # ratchet:actions/checkout@v4
+
+      - name: Install buf
+        uses: bufbuild/buf-setup-action@9672cee01808979ea1249f81d6d321217b9a10f6 # ratchet:bufbuild/buf-setup-action@v1
+        with:
+          version: "1.47.2"
+          buf_user: ${{ secrets.BUF_USER }}
+          buf_api_token: ${{ secrets.BUF_TOKEN }}
 
       - name: Install Go
         uses: actions/setup-go@0a12ed9d6a96ab950c8f026ed9f722fe0da7ef32 # ratchet:actions/setup-go@v5
@@ -23,8 +32,9 @@ jobs:
       - name: Check go vet
         run: '[ ! "$(go vet ./...)" ]'
 
-      # Temporarily disable running tests under CI until we have secrets setup
-      # to authenticate to buf.build
-      #- name: Test
-      #  run: go test -race ./...
+      - name: Build
+        run: go build -v ./...
+
+      - name: Test
+        run: go test -race ./...
 
