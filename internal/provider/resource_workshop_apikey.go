@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"google.golang.org/protobuf/proto"
@@ -36,9 +38,9 @@ type APIKeyResource struct {
 
 // APIKeyResourceModel describes the resource data model.
 type APIKeyResourceModel struct {
-	Name   types.String `tfsdk:"name"`
-	Role   types.String `tfsdk:"role"`
-	Secret types.String `tfsdk:"secret"`
+	Name        types.String `tfsdk:"name"`
+	Permissions types.List   `tfsdk:"permissions"`
+	Secret      types.String `tfsdk:"secret"`
 }
 
 func (r *APIKeyResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -55,14 +57,19 @@ func (r *APIKeyResource) Schema(ctx context.Context, req resource.SchemaRequest,
 				MarkdownDescription: "The name for this key",
 				Required:            true,
 			},
-			"role": schema.StringAttribute{
-				MarkdownDescription: "The role for this rule",
+			"permissions": schema.ListAttribute{
+				MarkdownDescription: "The permissions for this key",
 				Required:            true,
+				ElementType:         types.StringType,
+				Validators: []validator.List{
+					listvalidator.SizeAtLeast(1),
+				},
 			},
 
 			// Computed value, returned from Create
 			"secret": schema.StringAttribute{
 				Computed:            true,
+				Sensitive:           true,
 				MarkdownDescription: "The key secret",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
@@ -100,17 +107,24 @@ func (r *APIKeyResource) Create(ctx context.Context, req resource.CreateRequest,
 		return
 	}
 
+	elements := make([]types.String, 0, len(data.Permissions.Elements()))
+	_ = data.Permissions.ElementsAs(ctx, &elements, false)
+	perms := make([]string, 0, len(elements))
+	for _, e := range elements {
+		perms = append(perms, e.ValueString())
+	}
+
 	ckResp, err := r.client.CreateAPIKey(ctx, apipb.CreateAPIKeyRequest_builder{
-		Name:     proto.String(data.Name.ValueString()),
-		Role:     proto.String(data.Role.ValueString()),
-		Lifetime: durationpb.New(24 * 30 * time.Hour), // TODO(rah): Make this configurable
+		Name:        proto.String(data.Name.ValueString()),
+		Permissions: perms,
+		Lifetime:    durationpb.New(24 * 30 * time.Hour), // TODO(rah): Make this configurable
 	}.Build())
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Failed to create API key: %v", err))
 		return
 	}
 	if ckResp.GetSecret() == "" {
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Failed to get secret for new rule"))
+		resp.Diagnostics.AddError("Client Error", "Failed to get secret for new rule")
 		return
 	}
 

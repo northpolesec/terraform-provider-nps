@@ -1,17 +1,21 @@
 module github.com/northpolesec/terraform-provider-nps
 
-go 1.23.3
+go 1.24.0
 
 require (
-	buf.build/gen/go/northpolesec/protos/protocolbuffers/go v1.36.5-20250214013108-459ace571a4b.1
-	buf.build/gen/go/northpolesec/workshop-api/grpc/go v1.5.1-20250305191827-afa1370c9b36.2
-	buf.build/gen/go/northpolesec/workshop-api/protocolbuffers/go v1.36.5-20250305191827-afa1370c9b36.1
+	buf.build/gen/go/northpolesec/protos/protocolbuffers/go v1.36.6-20250616163955-79dc1a8fa05d.1
+	buf.build/gen/go/northpolesec/workshop-api/grpc/go v1.5.1-20250630205628-e6fc414157be.2
+	buf.build/gen/go/northpolesec/workshop-api/protocolbuffers/go v1.36.6-20250630205628-e6fc414157be.1
+	github.com/golang-jwt/jwt/v5 v5.2.2
 	github.com/hashicorp/terraform-plugin-framework v1.14.1
+	github.com/hashicorp/terraform-plugin-framework-validators v0.18.0
 	github.com/hashicorp/terraform-plugin-go v0.26.0
 	github.com/hashicorp/terraform-plugin-log v0.9.0
 	github.com/hashicorp/terraform-plugin-testing v1.11.0
+	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c
+	golang.org/x/oauth2 v0.24.0
 	google.golang.org/grpc v1.70.0
-	google.golang.org/protobuf v1.36.5
+	google.golang.org/protobuf v1.36.6
 )
 
 require (
@@ -21,7 +25,7 @@ require (
 	github.com/cloudflare/circl v1.3.7 // indirect
 	github.com/fatih/color v1.18.0 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
-	github.com/google/go-cmp v0.6.0 // indirect
+	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/hashicorp/errwrap v1.1.0 // indirect
 	github.com/hashicorp/go-checkpoint v0.5.0 // indirect
 	github.com/hashicorp/go-cleanhttp v0.5.2 // indirect

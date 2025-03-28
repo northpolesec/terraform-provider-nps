@@ -8,6 +8,7 @@ import (
 	"log"
 
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
+	"github.com/northpolesec/terraform-provider-nps/internal/auth"
 	"github.com/northpolesec/terraform-provider-nps/internal/provider"
 )
 
@@ -22,9 +23,18 @@ var (
 
 func main() {
 	var debug bool
+	var login bool
 
 	flag.BoolVar(&debug, "debug", false, "set to true to run the provider with support for debuggers like delve")
+	flag.BoolVar(&login, "login", false, "set to true to login to the provider")
 	flag.Parse()
+
+	if login {
+		if err := auth.GetAndStoreToken(context.Background(), "localhost:8080"); err != nil {
+			log.Fatal(err.Error())
+		}
+		return
+	}
 
 	opts := providerserver.ServeOpts{
 		// TODO: Update this string with the published name of your provider.

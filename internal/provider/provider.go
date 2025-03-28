@@ -14,6 +14,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/northpolesec/terraform-provider-nps/internal/auth"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
@@ -37,7 +38,6 @@ type NPSProvider struct {
 type NPSProviderModel struct {
 	Endpoint types.String `tfsdk:"endpoint"`
 	APIKey   types.String `tfsdk:"api_key"`
-	Insecure types.Bool   `tfsdk:"insecure"`
 }
 
 type NPSProviderResourceData struct {
@@ -53,17 +53,13 @@ func (p *NPSProvider) Schema(ctx context.Context, req provider.SchemaRequest, re
 	resp.Schema = schema.Schema{
 		Attributes: map[string]schema.Attribute{
 			"endpoint": schema.StringAttribute{
-				Description: "The base URL for the Workshop instance. Can also be supplied using the NPS_ENDPOINT envrionment variable.",
+				Description: "The base URL for the Workshop instance. Can also be supplied using the WORKSHOP_ENDPOINT envrionment variable.",
 				Optional:    true,
 			},
 			"api_key": schema.StringAttribute{
-				Description: "The API key to use. Can also be supplied using the NPS_API_KEY environment variable.",
+				Description: "The API key to use. Can also be supplied using the WORKSHOP_API_KEY environment variable.",
 				Optional:    true,
 				Sensitive:   true,
-			},
-			"insecure": schema.BoolAttribute{
-				Description: "Whether to allow non-TLS connections.",
-				Optional:    true,
 			},
 		},
 	}
@@ -73,7 +69,6 @@ func (p *NPSProvider) Configure(ctx context.Context, req provider.ConfigureReque
 	var data NPSProviderModel
 
 	resp.Diagnostics.Append(req.Config.Get(ctx, &data)...)
-
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -88,25 +83,24 @@ func (p *NPSProvider) Configure(ctx context.Context, req provider.ConfigureReque
 		return
 	}
 
-	// Validate API key
-	apiKey := data.APIKey.ValueString()
-	if e := os.Getenv("NPS_API_KEY"); e != "" {
-		apiKey = e
-	}
-	if apiKey == "" {
-		resp.Diagnostics.AddError("NPS Provider configuration error", "api_key (or NPS_API_KEY environment variable) must be set")
+	// Get the necessary auth call option.
+	rpcCreds, err := auth.APIKeyOrToken(ctx, data.APIKey.ValueString(), endpoint)
+	if err != nil {
+		resp.Diagnostics.AddError("NPS Provider Authentication error", err.Error())
 		return
 	}
 
-	opts := []grpc.DialOption{
-		grpc.WithPerRPCCredentials(apiKeyAuthorizer(apiKey)),
-	}
-	if data.Insecure.ValueBool() {
+	opts := []grpc.DialOption{grpc.WithPerRPCCredentials(rpcCreds)}
+
+	// If the endpoint is localhost, allow an insecure connection.
+	// Otherwise ensure TLS is used.
+	if data.Endpoint.ValueString() == "localhost:8080" {
 		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	} else {
 		opts = append(opts, grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{})))
 	}
 
+	// Create a new gRPC client for Workshop
 	conn, err := grpc.NewClient(fmt.Sprintf("dns:%s", endpoint), opts...)
 	if err != nil {
 		resp.Diagnostics.AddError("NPS Provider configuration error", fmt.Sprintf("Failed to connect to endpoint: %v", err))
@@ -141,13 +135,4 @@ func New(version string) func() provider.Provider {
 			version: version,
 		}
 	}
-}
-
-type apiKeyAuthorizer string
-
-func (k apiKeyAuthorizer) GetRequestMetadata(ctx context.Context, uri ...string) (map[string]string, error) {
-	return map[string]string{"Authorization": string(k)}, nil
-}
-func (k apiKeyAuthorizer) RequireTransportSecurity() bool {
-	return false
 }
