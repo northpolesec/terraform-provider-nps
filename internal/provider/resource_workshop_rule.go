@@ -6,13 +6,16 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
+	"github.com/northpolesec/terraform-provider-nps/internal/utils"
 	"google.golang.org/protobuf/proto"
 
 	syncpb "buf.build/gen/go/northpolesec/protos/protocolbuffers/go/sync"
@@ -40,6 +43,9 @@ type RuleResourceModel struct {
 	Policy     types.String `tfsdk:"policy"`
 	Tag        types.String `tfsdk:"tag"`
 	Comment    types.String `tfsdk:"comment"`
+	CustomMsg  types.String `tfsdk:"custom_msg"`
+	CustomURL  types.String `tfsdk:"custom_url"`
+	CELExpr    types.String `tfsdk:"cel_expr"`
 
 	Id types.String `tfsdk:"id"`
 }
@@ -61,17 +67,35 @@ func (r *RuleResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 			"rule_type": schema.StringAttribute{
 				MarkdownDescription: "The type of this rule",
 				Required:            true,
+				Validators: []validator.String{
+					stringvalidator.OneOf(utils.ProtoEnumToList(syncpb.RuleType(0).Descriptor())...),
+				},
 			},
 			"policy": schema.StringAttribute{
 				MarkdownDescription: "The policy for this rule",
 				Required:            true,
+				Validators: []validator.String{
+					stringvalidator.OneOf(utils.ProtoEnumToList(syncpb.Policy(0).Descriptor())...),
+				},
 			},
 			"tag": schema.StringAttribute{
 				MarkdownDescription: "The tag for this rule",
-				Optional:            true,
+				Required:            true,
 			},
 			"comment": schema.StringAttribute{
 				MarkdownDescription: "A comment to add to this rule",
+				Optional:            true,
+			},
+			"custom_msg": schema.StringAttribute{
+				MarkdownDescription: "A custom message to display to the user",
+				Optional:            true,
+			},
+			"custom_url": schema.StringAttribute{
+				MarkdownDescription: "A custom URL to redirect the user to",
+				Optional:            true,
+			},
+			"cel_expr": schema.StringAttribute{
+				MarkdownDescription: "A CEL expression to evaluate",
 				Optional:            true,
 			},
 
@@ -84,6 +108,19 @@ func (r *RuleResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 				},
 			},
 		},
+	}
+}
+
+func (r *RuleResource) ConfigValidators(ctx context.Context) []resource.ConfigValidator {
+	return []resource.ConfigValidator{
+		utils.ConfigValidatorFunc("Validate CEL rules have an expression", func(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
+			var data RuleResourceModel
+			resp.Diagnostics.Append(req.Config.Get(ctx, &data)...)
+
+			if data.Policy.ValueString() == "CEL" && data.CELExpr.ValueString() == "" {
+				resp.Diagnostics.AddError("CEL expression is required", "CEL expression is required when policy is set to CEL")
+			}
+		}),
 	}
 }
 
@@ -191,17 +228,20 @@ func createRule(ctx context.Context, client svcpb.WorkshopServiceClient, data *R
 	ruleType := syncpb.RuleType_value[data.RuleType.ValueString()]
 	rulePolicy := syncpb.Policy_value[data.Policy.ValueString()]
 
-	rule := &apipb.Rule{
+	rule := apipb.Rule_builder{
 		Identifier: data.Identifier.ValueString(),
 		RuleType:   syncpb.RuleType(ruleType),
 		Policy:     syncpb.Policy(rulePolicy),
 		Tag:        data.Tag.ValueString(),
 		Comment:    data.Comment.ValueString(),
-	}
+		CustomMsg:  data.CustomMsg.ValueString(),
+		CustomUrl:  data.CustomURL.ValueString(),
+		CelExpr:    data.CELExpr.ValueString(),
+	}.Build()
 
-	crResp, err := client.CreateRule(ctx, &apipb.CreateRuleRequest{
+	crResp, err := client.CreateRule(ctx, apipb.CreateRuleRequest_builder{
 		Rule: rule,
-	})
+	}.Build())
 	if err == nil {
 		data.Id = types.StringValue(crResp.GetRuleId())
 		tflog.Info(ctx, fmt.Sprintf("Created rule: %q", data.Id))

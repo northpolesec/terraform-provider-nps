@@ -18,10 +18,10 @@ func TestAccWorkshopAPIKey(t *testing.T) {
 		Steps: []resource.TestStep{
 			// Create and Read testing
 			{
-				Config: testAccExampleAPIKeyResourceConfig("test-key-1", "superadmin"),
+				Config: testAccExampleAPIKeyResourceConfig("test-key-1", "read:hosts,write:hosts"),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("nps_workshop_apikey.test-key-1", "name", "test-key-1"),
-					resource.TestCheckResourceAttr("nps_workshop_apikey.test-key-1", "role", "superadmin"),
+					resource.TestCheckResourceAttr("nps_workshop_apikey.test-key-1", "permissions", "[\"read:hosts\", \"write:hosts\"]"),
 				),
 			},
 			// Delete testing automatically occurs in TestCase
@@ -33,12 +33,13 @@ func testAccExampleAPIKeyResourceConfig(name, role string) string {
 	return fmt.Sprintf(`
 provider "nps" {
   endpoint = "localhost:8080"
-	insecure = true
 }
 
 resource "nps_workshop_apikey" %[1]q {
   name = %[1]q
-  role = %[2]q
+  permissions = [
+	  %[2]q
+	]
 }
 `, name, role)
 }
