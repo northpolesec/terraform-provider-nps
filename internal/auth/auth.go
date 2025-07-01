@@ -164,6 +164,13 @@ func writeTokenToFile(token *oauth2.Token) error {
 	return os.WriteFile(filePath, b, 0600)
 }
 
+func deleteTokenFromFile() error {
+	usr, _ := user.Current()
+	dir := usr.HomeDir
+	filePath := filepath.Join(dir, tokenFilePathSuffix)
+	return os.Remove(filePath)
+}
+
 // APIKeyAuthorizer is a PerRPCCredentials implementation that uses a static API key.
 type apiKeyAuthorizer string
 
@@ -185,6 +192,9 @@ type oauthRPCCreds struct {
 func (o oauthRPCCreds) GetRequestMetadata(ctx context.Context, uri ...string) (map[string]string, error) {
 	token, err := o.ts.Token()
 	if err != nil {
+		if err := deleteTokenFromFile(); err != nil {
+			tflog.Error(ctx, "Failed to delete token from file", map[string]any{"err": err})
+		}
 		return nil, err
 	}
 

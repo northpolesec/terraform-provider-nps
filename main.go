@@ -23,14 +23,14 @@ var (
 
 func main() {
 	var debug bool
-	var login bool
+	var loginServer string
 
 	flag.BoolVar(&debug, "debug", false, "set to true to run the provider with support for debuggers like delve")
-	flag.BoolVar(&login, "login", false, "set to true to login to the provider")
+	flag.StringVar(&loginServer, "login", "", "login to the provider using the specified server")
 	flag.Parse()
 
-	if login {
-		if err := auth.GetAndStoreToken(context.Background(), "localhost:8080"); err != nil {
+	if loginServer != "" {
+		if err := auth.GetAndStoreToken(context.Background(), loginServer); err != nil {
 			log.Fatal(err.Error())
 		}
 		return

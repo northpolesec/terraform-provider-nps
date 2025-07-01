@@ -10,5 +10,5 @@ resource "nps_workshop_rule" "say" {
   rule_type  = "SIGNINGID"
   policy     = "CEL"
   tag        = "global"
-  cel_expr   = "args = ['say', 'Santa', 'is', 'great']"
+  cel_expr   = "args == ['say', 'Santa', 'is', 'great']"
 }
