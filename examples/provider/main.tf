@@ -10,5 +10,6 @@ terraform {
 }
 
 provider "nps" {
-  endpoint = "localhost:8080"
+  #endpoint = "localhost:8080"
+  endpoint = "rah.north-pole.tech"
 }

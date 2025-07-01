@@ -95,7 +95,7 @@ func APIKeyOrToken(ctx context.Context, inputKey, serverURL string) (credentials
 
 	//lint:ignore ST1005 This error is directly presented to the user without
 	// any prefix so we need to capitalize it.
-	return nil, fmt.Errorf("Not logged in. Run `%s -login` to login", os.Args[0])
+	return nil, fmt.Errorf("Not logged in. Run `%s -login %s` to login", os.Args[0], serverURL)
 }
 
 func createConfig(_ context.Context, endpoint string) (*oauth2.Config, bool, error) {
