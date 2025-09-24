@@ -1,5 +1,4 @@
-// Copyright 2024 North Pole Security, Inc.
-
+// Copyright 2025 North Pole Security, Inc.
 package provider
 
 import (
@@ -18,7 +17,7 @@ func TestAccWorkshopRule(t *testing.T) {
 		Steps: []resource.TestStep{
 			// Create and Read testing
 			{
-				Config: testAccExampleRuleResourceConfig("yes", "platform:com.apple.yes", "SIGNINGID", "BLOCKLIST", "", "block yes"),
+				Config: testAccExampleRuleResourceConfig("yes", "platform:com.apple.yes", "SIGNINGID", "BLOCKLIST", "global", "block yes"),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("nps_workshop_rule.yes", "identifier", "platform:com.apple.yes"),
 					resource.TestCheckResourceAttr("nps_workshop_rule.yes", "rule_type", "SIGNINGID"),
@@ -53,7 +52,6 @@ func testAccExampleRuleResourceConfig(name, identifier, ruleType, policy, tag, c
 	return fmt.Sprintf(`
 provider "nps" {
   endpoint = "localhost:8080"
-	insecure = true
 }
 
 resource "nps_workshop_rule" %[1]q {

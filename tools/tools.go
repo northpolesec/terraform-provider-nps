@@ -1,4 +1,4 @@
-// Copyright 2024 North Pole Security, Inc.
+// Copyright 2025 North Pole Security, Inc.
 
 //go:build generate
 

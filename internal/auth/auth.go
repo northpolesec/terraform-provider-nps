@@ -1,3 +1,4 @@
+// Copyright 2025 North Pole Security, Inc.
 package auth
 
 import (

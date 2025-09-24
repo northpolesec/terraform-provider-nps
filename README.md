@@ -1,2 +1,3 @@
 # terraform-provider
-Terraform provider for NPS
+
+Terraform provider for North Pole Security's Workshop.

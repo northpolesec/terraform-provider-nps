@@ -1,3 +1,4 @@
+// Copyright 2025 North Pole Security, Inc.
 package utils
 
 import (
@@ -6,6 +7,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 )
 
+// ConfigValidator satisfies the resource.ConfigValidator interface by wrapping
+// a function and a simple description.
 type ConfigValidator struct {
 	description string
 	fn          func(context.Context, resource.ValidateConfigRequest, *resource.ValidateConfigResponse)

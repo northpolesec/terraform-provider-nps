@@ -1,5 +1,4 @@
 // Copyright 2025 North Pole Security, Inc.
-
 package provider
 
 import (
@@ -40,6 +39,7 @@ type APIKeyResource struct {
 type APIKeyResourceModel struct {
 	Name        types.String `tfsdk:"name"`
 	Permissions types.List   `tfsdk:"permissions"`
+	Lifetime    types.Int64  `tfsdk:"lifetime"`
 	Secret      types.String `tfsdk:"secret"`
 }
 
@@ -64,6 +64,10 @@ func (r *APIKeyResource) Schema(ctx context.Context, req resource.SchemaRequest,
 				Validators: []validator.List{
 					listvalidator.SizeAtLeast(1),
 				},
+			},
+			"lifetime": schema.Int64Attribute{
+				MarkdownDescription: "The lifetime for this key in hours",
+				Optional:            true,
 			},
 
 			// Computed value, returned from Create
@@ -114,10 +118,15 @@ func (r *APIKeyResource) Create(ctx context.Context, req resource.CreateRequest,
 		perms = append(perms, e.ValueString())
 	}
 
+	lifetimeHours := time.Duration(data.Lifetime.ValueInt64()) * time.Hour
+	if lifetimeHours == 0 {
+		lifetimeHours = 24 * 30 * time.Hour
+	}
+
 	ckResp, err := r.client.CreateAPIKey(ctx, apipb.CreateAPIKeyRequest_builder{
 		Name:        proto.String(data.Name.ValueString()),
 		Permissions: perms,
-		Lifetime:    durationpb.New(24 * 30 * time.Hour), // TODO(rah): Make this configurable
+		Lifetime:    durationpb.New(lifetimeHours),
 	}.Build())
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Failed to create API key: %v", err))
@@ -144,6 +153,24 @@ func (r *APIKeyResource) Read(ctx context.Context, req resource.ReadRequest, res
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	ret, err := r.client.ListAPIKeys(ctx, apipb.ListAPIKeysRequest_builder{
+		Filter:   proto.String("name = \"" + data.Name.ValueString() + "\""),
+		PageSize: proto.Uint32(1),
+	}.Build())
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Failed to list API keys: %v", err))
+		return
+	}
+	if len(ret.GetKeys()) == 0 {
+		tflog.Info(ctx, fmt.Sprintf("API key %q not found", data.Name.ValueString()))
+		resp.State.RemoveResource(ctx)
+		return
+	}
+
+	key := ret.GetKeys()[0]
+	data.Name = types.StringValue(key.GetName())
+	data.Permissions, _ = types.ListValueFrom(ctx, types.StringType, key.GetPermissions())
 
 	// Save updated data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
