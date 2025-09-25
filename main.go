@@ -1,5 +1,4 @@
-// Copyright 2024 North Pole Security, Inc.
-
+// Copyright 2025 North Pole Security, Inc.
 package main
 
 import (
@@ -29,6 +28,10 @@ func main() {
 	flag.StringVar(&loginServer, "login", "", "login to the provider using the specified server")
 	flag.Parse()
 
+	// Ordinarily a Terraform provider will only start a providerserver. This provider
+	// has a special case for the -login flag that allows the user to login to the
+	// Workshop instance and store the token so that the next time the provider runs
+	// the token will be available.
 	if loginServer != "" {
 		if err := auth.GetAndStoreToken(context.Background(), loginServer); err != nil {
 			log.Fatal(err.Error())
