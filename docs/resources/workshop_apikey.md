@@ -3,12 +3,12 @@
 page_title: "nps_workshop_apikey Resource - nps"
 subcategory: ""
 description: |-
-  APIKey
+  The nps_workshop_apikey resource manages API keys.
 ---
 
 # nps_workshop_apikey (Resource)
 
-APIKey
+The `nps_workshop_apikey` resource manages API keys.
 
 
 

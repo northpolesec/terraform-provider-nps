@@ -56,8 +56,7 @@ func (r *RuleResource) Metadata(ctx context.Context, req resource.MetadataReques
 
 func (r *RuleResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		// This description is used by the documentation generator and the language server.
-		MarkdownDescription: "Rule",
+		MarkdownDescription: "The `nps_workshop_rule` resource manages Rules.",
 
 		Attributes: map[string]schema.Attribute{
 			"identifier": schema.StringAttribute{

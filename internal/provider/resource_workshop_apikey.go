@@ -50,7 +50,7 @@ func (r *APIKeyResource) Metadata(ctx context.Context, req resource.MetadataRequ
 func (r *APIKeyResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		// This description is used by the documentation generator and the language server.
-		MarkdownDescription: "APIKey",
+		MarkdownDescription: "The `nps_workshop_apikey` resource manages API keys.",
 
 		Attributes: map[string]schema.Attribute{
 			"name": schema.StringAttribute{
