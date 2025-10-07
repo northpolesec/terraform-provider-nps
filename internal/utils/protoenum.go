@@ -11,9 +11,8 @@ func ProtoEnumToList(enum protoreflect.EnumDescriptor) []string {
 
 	list := make([]string, 0, values.Len())
 
-	for i := 0; i < values.Len(); i++ {
-		value := values.Get(i)
-		list = append(list, string(value.Name()))
+	for i := range values.Len() {
+		list = append(list, string(values.Get(i).Name()))
 	}
 
 	return list
