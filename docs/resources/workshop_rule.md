@@ -4,11 +4,14 @@ page_title: "nps_workshop_rule Resource - nps"
 subcategory: ""
 description: |-
   The nps_workshop_rule resource manages Rules.
+  Management of rules requires the read:rules and write:rules permissions.
 ---
 
 # nps_workshop_rule (Resource)
 
 The `nps_workshop_rule` resource manages Rules.
+
+Management of rules requires the `read:rules` and `write:rules` permissions.
 
 ## Example Usage
 
@@ -28,19 +31,27 @@ resource "nps_workshop_rule" "say" {
 
 ### Required
 
-- `identifier` (String) The identifier for this rule
-- `policy` (String) The policy for this rule
-- `rule_type` (String) The type of this rule
-- `tag` (String) The tag for this rule
+- `identifier` (String) The identifier for this rule. The format of this identifier depends on the rule type.
+- `policy` (String) The policy for this rule. The possible values are: `ALLOWLIST`, `ALLOWLIST_COMPILER`, `BLOCKLIST`, `SILENT_BLOCKLIST`, and `CEL`.
+- `rule_type` (String) The type of this rule. The possible values are: `BINARY`, `CERTIFICATE`, `TEAMID`, `SIGNINGID`, and `CDHASH`.
+- `tag` (String) The tag for this rule. The tag determines which hosts this rule will apply to. The tag must already exist in Workshop.
 
 ### Optional
 
-- `block_reason` (String) The block reason for this rule
-- `cel_expr` (String) A CEL expression to evaluate
-- `comment` (String) A comment to add to this rule
-- `custom_msg` (String) A custom message to display to the user
-- `custom_url` (String) A custom URL to redirect the user to
+- `block_reason` (String) The block reason for this rule. The possible values are: `POLICY`, and `MALICIOUS`.
+- `cel_expr` (String) A CEL expression to evaluate when this rule matches. Only valid when the policy is set to `CEL`.
+- `comment` (String) A comment to add to this rule. Will be displayed in the Workshop UI.
+- `custom_msg` (String) A custom message to display to the user when this rule causes Santa to block the execution.
+- `custom_url` (String) A custom URL to redirect the user to when this rule causes Santa to block the execution. Setting a custom URL will override the `EventDetailURL` used by the Open button.
 
 ### Read-Only
 
-- `id` (String) The ID of this rule
+- `id` (String) The automatically generated ID of this rule
+
+## Import
+
+Import is supported using the following syntax:
+
+```shell
+terraform import nps_workshop_rule.test 90216EA0-B60E-42EF-996A-37212B8F378D
+```

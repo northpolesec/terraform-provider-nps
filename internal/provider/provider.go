@@ -54,13 +54,13 @@ func (p *NPSProvider) Schema(ctx context.Context, req provider.SchemaRequest, re
 	resp.Schema = schema.Schema{
 		Attributes: map[string]schema.Attribute{
 			"endpoint": schema.StringAttribute{
-				Description: "The base URL for the Workshop instance. Can also be supplied using the `WORKSHOP_ENDPOINT` envrionment variable.",
-				Optional:    true,
+				MarkdownDescription: "The base URL for the Workshop instance. Can also be supplied using the `WORKSHOP_ENDPOINT` envrionment variable.",
+				Optional:            true,
 			},
 			"api_key": schema.StringAttribute{
-				Description: "The API key to use. Can also be supplied using the `WORKSHOP_API_KEY` environment variable.",
-				Optional:    true,
-				Sensitive:   true,
+				MarkdownDescription: "The API key to use. Can also be supplied using the `WORKSHOP_API_KEY` environment variable. If no API key is provided, the provider will attempt to use a stored short-lived user token.",
+				Optional:            true,
+				Sensitive:           true,
 			},
 		},
 	}

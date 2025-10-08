@@ -56,59 +56,67 @@ func (r *RuleResource) Metadata(ctx context.Context, req resource.MetadataReques
 
 func (r *RuleResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "The `nps_workshop_rule` resource manages Rules.",
+		Description:         "The nps_workshop_rule resource manages Rules. Management of rules requires the read:rules and write:rules permissions.",
+		MarkdownDescription: "The `nps_workshop_rule` resource manages Rules.\n\nManagement of rules requires the `read:rules` and `write:rules` permissions.",
 
 		Attributes: map[string]schema.Attribute{
 			"identifier": schema.StringAttribute{
-				MarkdownDescription: "The identifier for this rule",
+				Description:         "The identifier for this rule. The format of this identifier depends on the rule type.",
+				MarkdownDescription: "The identifier for this rule. The format of this identifier depends on the rule type.",
 				Required:            true,
 			},
 			"rule_type": schema.StringAttribute{
-				MarkdownDescription: "The type of this rule",
+				Description:         "The type of this rule. The possible values are: BINARY, CERTIFICATE, TEAMID, SIGNINGID, and CDHASH.",
+				MarkdownDescription: "The type of this rule. The possible values are: `BINARY`, `CERTIFICATE`, `TEAMID`, `SIGNINGID`, and `CDHASH`.",
 				Required:            true,
 				Validators: []validator.String{
 					stringvalidator.OneOf(utils.ProtoEnumToList(syncpb.RuleType(0).Descriptor())...),
 				},
 			},
 			"policy": schema.StringAttribute{
-				MarkdownDescription: "The policy for this rule",
+				Description:         "The policy for this rule. The possible values are: ALLOWLIST, ALLOWLIST_COMPILER, BLOCKLIST, SILENT_BLOCKLIST, and CEL.",
+				MarkdownDescription: "The policy for this rule. The possible values are: `ALLOWLIST`, `ALLOWLIST_COMPILER`, `BLOCKLIST`, `SILENT_BLOCKLIST`, and `CEL`.",
 				Required:            true,
 				Validators: []validator.String{
 					stringvalidator.OneOf(utils.ProtoEnumToList(syncpb.Policy(0).Descriptor())...),
 				},
 			},
 			"block_reason": schema.StringAttribute{
-				MarkdownDescription: "The block reason for this rule",
+				Description:         "The block reason for this rule. The possible values are: POLICY and MALICIOUS.",
+				MarkdownDescription: "The block reason for this rule. The possible values are: `POLICY`, and `MALICIOUS`.",
 				Optional:            true,
 				Validators: []validator.String{
 					stringvalidator.OneOf(utils.ProtoEnumToList(apipb.Rule_BlockReason(0).Descriptor())...),
 				},
 			},
 			"tag": schema.StringAttribute{
-				MarkdownDescription: "The tag for this rule",
+				Description:         "The tag for this rule. The tag determines which hosts this rule will apply to. The tag must already exist in Workshop.",
+				MarkdownDescription: "The tag for this rule. The tag determines which hosts this rule will apply to. The tag must already exist in Workshop.",
 				Required:            true,
 			},
 			"cel_expr": schema.StringAttribute{
-				MarkdownDescription: "A CEL expression to evaluate",
+				Description:         "A CEL expression to evaluate when this rule matches. Only valid when the policy is set to CEL.",
+				MarkdownDescription: "A CEL expression to evaluate when this rule matches. Only valid when the policy is set to `CEL`.",
 				Optional:            true,
 			},
 			"comment": schema.StringAttribute{
-				MarkdownDescription: "A comment to add to this rule",
+				MarkdownDescription: "A comment to add to this rule. Will be displayed in the Workshop UI.",
 				Optional:            true,
 			},
 			"custom_msg": schema.StringAttribute{
-				MarkdownDescription: "A custom message to display to the user",
+				MarkdownDescription: "A custom message to display to the user when this rule causes Santa to block the execution.",
 				Optional:            true,
 			},
 			"custom_url": schema.StringAttribute{
-				MarkdownDescription: "A custom URL to redirect the user to",
+				Description:         "A custom URL to redirect the user to when this rule causes Santa to block the execution. Setting a custom URL will override the EventDetailURL used by the Open button.",
+				MarkdownDescription: "A custom URL to redirect the user to when this rule causes Santa to block the execution. Setting a custom URL will override the `EventDetailURL` used by the Open button.",
 				Optional:            true,
 			},
 
 			// Computed value, returned from Create
 			"id": schema.StringAttribute{
 				Computed:            true,
-				MarkdownDescription: "The ID of this rule",
+				MarkdownDescription: "The automatically generated ID of this rule",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
