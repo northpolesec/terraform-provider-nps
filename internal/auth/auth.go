@@ -91,12 +91,12 @@ func APIKeyOrToken(ctx context.Context, inputKey, serverURL string) (credentials
 	token := apiTokenFromFile(ctx)
 	if token != nil {
 		tflog.Info(ctx, "Using existing API token from file")
-		return oauthRPCCreds{ts: cfg.TokenSource(context.Background(), token), insecure: insecure}, nil
+		return oauthRPCCreds{ts: cfg.TokenSource(context.Background(), token), insecure: insecure, serverURL: serverURL}, nil
 	}
 
 	//lint:ignore ST1005 This error is directly presented to the user without
 	// any prefix so we need to capitalize it.
-	return nil, fmt.Errorf("Not logged in. Run `%s -login %s` to login", os.Args[0], serverURL)
+	return nil, fmt.Errorf("Not logged in. Run the following to login:\n\n\t%s -login %s", os.Args[0], serverURL)
 }
 
 func createConfig(_ context.Context, endpoint string) (*oauth2.Config, bool, error) {
@@ -186,8 +186,9 @@ func (k apiKeyAuthorizer) RequireTransportSecurity() bool {
 // The gRPC library already has an implementation of this but it cannot be used with
 // insecure connections, which makes localhost testing impossible.
 type oauthRPCCreds struct {
-	ts       oauth2.TokenSource
-	insecure bool
+	ts        oauth2.TokenSource
+	serverURL string
+	insecure  bool
 }
 
 func (o oauthRPCCreds) GetRequestMetadata(ctx context.Context, uri ...string) (map[string]string, error) {
@@ -196,7 +197,7 @@ func (o oauthRPCCreds) GetRequestMetadata(ctx context.Context, uri ...string) (m
 		if err := deleteTokenFromFile(); err != nil {
 			tflog.Error(ctx, "Failed to delete token from file", map[string]any{"err": err})
 		}
-		return nil, err
+		return nil, fmt.Errorf("%w. Run the following to login:\n\n\t%s -login %s", err, os.Args[0], o.serverURL)
 	}
 
 	// Add the expiration time to the token if it's not already set.
