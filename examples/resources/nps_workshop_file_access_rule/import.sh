@@ -1,0 +1,1 @@
+terraform import nps_workshop_file_access_rule.example 12345

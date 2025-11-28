@@ -5,6 +5,7 @@ GITHUB_TOKEN ?= $(error "GITHUB_TOKEN must be set to a valid GitHub personal acc
 
 build:
 	go build -v ./...
+	(cd tools && go generate)
 
 install: build
 	go install -v ./...
