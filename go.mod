@@ -3,9 +3,8 @@ module github.com/northpolesec/terraform-provider-nps
 go 1.24.0
 
 require (
-	buf.build/gen/go/northpolesec/protos/protocolbuffers/go v1.36.10-20251010195328-d4130b11e006.1
-	buf.build/gen/go/northpolesec/workshop-api/grpc/go v1.5.1-20251021163856-8c326ad5c07a.2
-	buf.build/gen/go/northpolesec/workshop-api/protocolbuffers/go v1.36.10-20251021163856-8c326ad5c07a.1
+	buf.build/gen/go/northpolesec/workshop-api/grpc/go v1.6.0-20260109224245-0a358247e9c2.1
+	buf.build/gen/go/northpolesec/workshop-api/protocolbuffers/go v1.36.11-20260109224245-0a358247e9c2.1
 	github.com/golang-jwt/jwt/v5 v5.3.0
 	github.com/hashicorp/terraform-plugin-framework v1.16.0
 	github.com/hashicorp/terraform-plugin-framework-validators v0.18.0
@@ -15,10 +14,11 @@ require (
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c
 	golang.org/x/oauth2 v0.31.0
 	google.golang.org/grpc v1.75.1
-	google.golang.org/protobuf v1.36.10
+	google.golang.org/protobuf v1.36.11
 )
 
 require (
+	buf.build/gen/go/northpolesec/protos/protocolbuffers/go v1.36.11-20251222234036-85229a4bd2f9.1 // indirect
 	github.com/ProtonMail/go-crypto v1.1.6 // indirect
 	github.com/agext/levenshtein v1.2.2 // indirect
 	github.com/apparentlymart/go-textseg/v15 v15.0.0 // indirect
@@ -66,6 +66,5 @@ require (
 	golang.org/x/text v0.29.0 // indirect
 	golang.org/x/tools v0.36.0 // indirect
 	google.golang.org/appengine v1.6.8 // indirect
-	google.golang.org/genproto/googleapis/api v0.0.0-20250922171735-9219d122eba9 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250922171735-9219d122eba9 // indirect
 )

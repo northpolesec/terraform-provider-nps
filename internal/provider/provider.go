@@ -119,6 +119,7 @@ func (p *NPSProvider) Resources(ctx context.Context) []func() resource.Resource 
 	return []func() resource.Resource{
 		NewAPIKeyResource,
 		NewFileAccessRuleResource,
+		NewPackageRuleResource,
 		NewRuleResource,
 		NewTagResource,
 	}

@@ -18,7 +18,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"google.golang.org/protobuf/proto"
 
-	syncpb "buf.build/gen/go/northpolesec/protos/protocolbuffers/go/sync"
 	svcpb "buf.build/gen/go/northpolesec/workshop-api/grpc/go/workshop/v1/workshopv1grpc"
 	apipb "buf.build/gen/go/northpolesec/workshop-api/protocolbuffers/go/workshop/v1"
 )
@@ -247,16 +246,16 @@ func (r *FileAccessRuleResource) Create(ctx context.Context, req resource.Create
 	}
 
 	// Convert rule type string to enum
-	ruleType := syncpb.FileAccessRule_RULE_TYPE_UNSPECIFIED
+	ruleType := apipb.FileAccessRuleType_FILE_ACCESS_RULE_TYPE_UNSPECIFIED
 	switch data.RuleType.ValueString() {
 	case "PathsWithAllowedProcesses":
-		ruleType = syncpb.FileAccessRule_RULE_TYPE_PATHS_WITH_ALLOWED_PROCESSES
+		ruleType = apipb.FileAccessRuleType_FILE_ACCESS_RULE_TYPE_PATHS_WITH_ALLOWED_PROCESSES
 	case "PathsWithDeniedProcesses":
-		ruleType = syncpb.FileAccessRule_RULE_TYPE_PATHS_WITH_DENIED_PROCESSES
+		ruleType = apipb.FileAccessRuleType_FILE_ACCESS_RULE_TYPE_PATHS_WITH_DENIED_PROCESSES
 	case "ProcessesWithAllowedPaths":
-		ruleType = syncpb.FileAccessRule_RULE_TYPE_PROCESSES_WITH_ALLOWED_PATHS
+		ruleType = apipb.FileAccessRuleType_FILE_ACCESS_RULE_TYPE_PROCESSES_WITH_ALLOWED_PATHS
 	case "ProcessesWithDeniedPaths":
-		ruleType = syncpb.FileAccessRule_RULE_TYPE_PROCESSES_WITH_DENIED_PATHS
+		ruleType = apipb.FileAccessRuleType_FILE_ACCESS_RULE_TYPE_PROCESSES_WITH_DENIED_PATHS
 	}
 
 	// Build the file access rule
