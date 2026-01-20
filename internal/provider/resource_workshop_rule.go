@@ -16,7 +16,6 @@ import (
 	"github.com/northpolesec/terraform-provider-nps/internal/utils"
 	"google.golang.org/protobuf/proto"
 
-	syncpb "buf.build/gen/go/northpolesec/protos/protocolbuffers/go/sync"
 	svcpb "buf.build/gen/go/northpolesec/workshop-api/grpc/go/workshop/v1/workshopv1grpc"
 	apipb "buf.build/gen/go/northpolesec/workshop-api/protocolbuffers/go/workshop/v1"
 )
@@ -70,7 +69,7 @@ func (r *RuleResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 				MarkdownDescription: "The type of this rule. The possible values are: `BINARY`, `CERTIFICATE`, `TEAMID`, `SIGNINGID`, and `CDHASH`.",
 				Required:            true,
 				Validators: []validator.String{
-					stringvalidator.OneOf(utils.ProtoEnumToList(syncpb.RuleType(0).Descriptor())...),
+					stringvalidator.OneOf(utils.ProtoEnumToList(apipb.RuleType(0).Descriptor())...),
 				},
 			},
 			"policy": schema.StringAttribute{
@@ -78,7 +77,7 @@ func (r *RuleResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 				MarkdownDescription: "The policy for this rule. The possible values are: `ALLOWLIST`, `ALLOWLIST_COMPILER`, `BLOCKLIST`, `SILENT_BLOCKLIST`, and `CEL`.",
 				Required:            true,
 				Validators: []validator.String{
-					stringvalidator.OneOf(utils.ProtoEnumToList(syncpb.Policy(0).Descriptor())...),
+					stringvalidator.OneOf(utils.ProtoEnumToList(apipb.Policy(0).Descriptor())...),
 				},
 			},
 			"block_reason": schema.StringAttribute{
@@ -170,13 +169,13 @@ func (r *RuleResource) Create(ctx context.Context, req resource.CreateRequest, r
 		return
 	}
 
-	ruleType := syncpb.RuleType_value[data.RuleType.ValueString()]
-	rulePolicy := syncpb.Policy_value[data.Policy.ValueString()]
+	ruleType := apipb.RuleType_value[data.RuleType.ValueString()]
+	rulePolicy := apipb.Policy_value[data.Policy.ValueString()]
 
 	rule := apipb.Rule_builder{
 		Identifier: data.Identifier.ValueString(),
-		RuleType:   syncpb.RuleType(ruleType),
-		Policy:     syncpb.Policy(rulePolicy),
+		RuleType:   apipb.RuleType(ruleType),
+		Policy:     apipb.Policy(rulePolicy),
 		Tag:        data.Tag.ValueString(),
 		Comment:    data.Comment.ValueString(),
 		CustomMsg:  data.CustomMsg.ValueString(),
