@@ -6,8 +6,11 @@ import (
 	"fmt"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
+	"github.com/hashicorp/terraform-plugin-framework/list"
+	listschema "github.com/hashicorp/terraform-plugin-framework/list/schema"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/identityschema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
@@ -24,6 +27,9 @@ import (
 var _ resource.Resource = &RuleResource{}
 var _ resource.ResourceWithConfigure = &RuleResource{}
 var _ resource.ResourceWithImportState = &RuleResource{}
+var _ resource.ResourceWithIdentity = &RuleResource{}
+var _ list.ListResource = &RuleResource{}
+var _ list.ListResourceWithConfigure = &RuleResource{}
 
 func NewRuleResource() resource.Resource {
 	return &RuleResource{}
@@ -32,6 +38,11 @@ func NewRuleResource() resource.Resource {
 // RuleResource defines the resource implementation.
 type RuleResource struct {
 	client svcpb.WorkshopServiceClient
+}
+
+// RuleIdentityModel describes the identity data model.
+type RuleIdentityModel struct {
+	Id types.String `tfsdk:"id"`
 }
 
 // RuleResourceModel describes the resource data model.
@@ -193,6 +204,9 @@ func (r *RuleResource) Create(ctx context.Context, req resource.CreateRequest, r
 
 	data.Id = types.StringValue(crResp.GetRuleId())
 
+	// Set the identity
+	resp.Diagnostics.Append(resp.Identity.Set(ctx, RuleIdentityModel{Id: data.Id})...)
+
 	// Save data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
@@ -255,6 +269,9 @@ func (r *RuleResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 		data.CELExpr = types.StringValue(rule.GetCelExpr())
 	}
 
+	// Set the identity
+	resp.Diagnostics.Append(resp.Identity.Set(ctx, RuleIdentityModel{Id: data.Id})...)
+
 	// Save updated data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
@@ -288,4 +305,78 @@ func (r *RuleResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 func (r *RuleResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	// Import a rule by ID, which will trigger a Read.
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+}
+
+func (r *RuleResource) IdentitySchema(ctx context.Context, req resource.IdentitySchemaRequest, resp *resource.IdentitySchemaResponse) {
+	resp.IdentitySchema = identityschema.Schema{
+		Attributes: map[string]identityschema.Attribute{
+			"id": identityschema.StringAttribute{
+				RequiredForImport: true,
+			},
+		},
+	}
+}
+
+func NewRuleListResource() list.ListResource {
+	return &RuleResource{}
+}
+
+func (r *RuleResource) ListResourceConfigSchema(ctx context.Context, req list.ListResourceSchemaRequest, resp *list.ListResourceSchemaResponse) {
+	resp.Schema = listschema.Schema{
+		Description: "List all rules in the Workshop instance.",
+		Attributes:  map[string]listschema.Attribute{},
+	}
+}
+
+func (r *RuleResource) List(ctx context.Context, req list.ListRequest, stream *list.ListResultsStream) {
+	stream.Results = func(push func(list.ListResult) bool) {
+		ret, err := r.client.ListRules(ctx, apipb.ListRulesRequest_builder{}.Build())
+		if err != nil {
+			result := req.NewListResult(ctx)
+			result.Diagnostics.AddError("Client Error", "Failed to list rules: "+err.Error())
+			push(result)
+			return
+		}
+
+		for _, rule := range ret.GetRules() {
+			result := req.NewListResult(ctx)
+			result.DisplayName = fmt.Sprintf("%s %s", rule.GetRuleType().String(), rule.GetIdentifier())
+
+			result.Diagnostics.Append(result.Identity.Set(ctx, RuleIdentityModel{
+				Id: types.StringValue(rule.GetRuleId()),
+			})...)
+
+			if req.IncludeResource {
+				model := RuleResourceModel{
+					Id:         types.StringValue(rule.GetRuleId()),
+					Identifier: types.StringValue(rule.GetIdentifier()),
+					RuleType:   types.StringValue(rule.GetRuleType().String()),
+					Policy:     types.StringValue(rule.GetPolicy().String()),
+					Tag:        types.StringValue(rule.GetTag()),
+				}
+
+				if rule.GetBlockReason() != apipb.Rule_BLOCK_REASON_UNSPECIFIED {
+					model.BlockReason = types.StringValue(rule.GetBlockReason().String())
+				}
+				if rule.GetComment() != "" {
+					model.Comment = types.StringValue(rule.GetComment())
+				}
+				if rule.GetCustomMsg() != "" {
+					model.CustomMsg = types.StringValue(rule.GetCustomMsg())
+				}
+				if rule.GetCustomUrl() != "" {
+					model.CustomURL = types.StringValue(rule.GetCustomUrl())
+				}
+				if rule.GetCelExpr() != "" {
+					model.CELExpr = types.StringValue(rule.GetCelExpr())
+				}
+
+				result.Diagnostics.Append(result.Resource.Set(ctx, model)...)
+			}
+
+			if !push(result) {
+				return
+			}
+		}
+	}
 }

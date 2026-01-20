@@ -7,8 +7,11 @@ import (
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
+	"github.com/hashicorp/terraform-plugin-framework/list"
+	listschema "github.com/hashicorp/terraform-plugin-framework/list/schema"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/identityschema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
@@ -25,6 +28,9 @@ import (
 // Ensure provider defined types fully satisfy framework interfaces.
 var _ resource.Resource = &APIKeyResource{}
 var _ resource.ResourceWithImportState = &APIKeyResource{}
+var _ resource.ResourceWithIdentity = &APIKeyResource{}
+var _ list.ListResource = &APIKeyResource{}
+var _ list.ListResourceWithConfigure = &APIKeyResource{}
 
 func NewAPIKeyResource() resource.Resource {
 	return &APIKeyResource{}
@@ -33,6 +39,11 @@ func NewAPIKeyResource() resource.Resource {
 // APIKeyResource defines the resource implementation.
 type APIKeyResource struct {
 	client svcpb.WorkshopServiceClient
+}
+
+// APIKeyIdentityModel describes the identity data model.
+type APIKeyIdentityModel struct {
+	Name types.String `tfsdk:"name"`
 }
 
 // APIKeyResourceModel describes the resource data model.
@@ -140,6 +151,9 @@ func (r *APIKeyResource) Create(ctx context.Context, req resource.CreateRequest,
 	data.Secret = types.StringValue(ckResp.GetSecret())
 	tflog.Info(ctx, fmt.Sprintf("Created API key: %q", data.Secret))
 
+	// Set the identity
+	resp.Diagnostics.Append(resp.Identity.Set(ctx, APIKeyIdentityModel{Name: data.Name})...)
+
 	// Save data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
@@ -171,6 +185,9 @@ func (r *APIKeyResource) Read(ctx context.Context, req resource.ReadRequest, res
 	key := ret.GetKeys()[0]
 	data.Name = types.StringValue(key.GetName())
 	data.Permissions, _ = types.ListValueFrom(ctx, types.StringType, key.GetPermissions())
+
+	// Set the identity
+	resp.Diagnostics.Append(resp.Identity.Set(ctx, APIKeyIdentityModel{Name: data.Name})...)
 
 	// Save updated data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
@@ -211,4 +228,58 @@ func (r *APIKeyResource) Delete(ctx context.Context, req resource.DeleteRequest,
 
 func (r *APIKeyResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+}
+
+func (r *APIKeyResource) IdentitySchema(ctx context.Context, req resource.IdentitySchemaRequest, resp *resource.IdentitySchemaResponse) {
+	resp.IdentitySchema = identityschema.Schema{
+		Attributes: map[string]identityschema.Attribute{
+			"name": identityschema.StringAttribute{
+				RequiredForImport: true,
+			},
+		},
+	}
+}
+
+func NewAPIKeyListResource() list.ListResource {
+	return &APIKeyResource{}
+}
+
+func (r *APIKeyResource) ListResourceConfigSchema(ctx context.Context, req list.ListResourceSchemaRequest, resp *list.ListResourceSchemaResponse) {
+	resp.Schema = listschema.Schema{
+		Description: "List all API keys in the Workshop instance.",
+		Attributes:  map[string]listschema.Attribute{},
+	}
+}
+
+func (r *APIKeyResource) List(ctx context.Context, req list.ListRequest, stream *list.ListResultsStream) {
+	stream.Results = func(push func(list.ListResult) bool) {
+		ret, err := r.client.ListAPIKeys(ctx, apipb.ListAPIKeysRequest_builder{}.Build())
+		if err != nil {
+			result := req.NewListResult(ctx)
+			result.Diagnostics.AddError("Client Error", "Failed to list API keys: "+err.Error())
+			push(result)
+			return
+		}
+
+		for _, key := range ret.GetKeys() {
+			result := req.NewListResult(ctx)
+			result.DisplayName = key.GetName()
+
+			result.Diagnostics.Append(result.Identity.Set(ctx, APIKeyIdentityModel{
+				Name: types.StringValue(key.GetName()),
+			})...)
+
+			if req.IncludeResource {
+				permissions, _ := types.ListValueFrom(ctx, types.StringType, key.GetPermissions())
+				result.Diagnostics.Append(result.Resource.Set(ctx, APIKeyResourceModel{
+					Name:        types.StringValue(key.GetName()),
+					Permissions: permissions,
+				})...)
+			}
+
+			if !push(result) {
+				return
+			}
+		}
+	}
 }
