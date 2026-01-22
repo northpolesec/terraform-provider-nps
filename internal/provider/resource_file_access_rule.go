@@ -8,8 +8,11 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
+	"github.com/hashicorp/terraform-plugin-framework/list"
+	listschema "github.com/hashicorp/terraform-plugin-framework/list/schema"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/identityschema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
@@ -27,6 +30,9 @@ import (
 var _ resource.Resource = &FileAccessRuleResource{}
 var _ resource.ResourceWithConfigure = &FileAccessRuleResource{}
 var _ resource.ResourceWithImportState = &FileAccessRuleResource{}
+var _ resource.ResourceWithIdentity = &FileAccessRuleResource{}
+var _ list.ListResource = &FileAccessRuleResource{}
+var _ list.ListResourceWithConfigure = &FileAccessRuleResource{}
 
 func NewFileAccessRuleResource() resource.Resource {
 	return &FileAccessRuleResource{}
@@ -35,6 +41,11 @@ func NewFileAccessRuleResource() resource.Resource {
 // FileAccessRuleResource defines the resource implementation.
 type FileAccessRuleResource struct {
 	client svcpb.WorkshopServiceClient
+}
+
+// FileAccessRuleIdentityModel describes the identity data model.
+type FileAccessRuleIdentityModel struct {
+	Id types.Int64 `tfsdk:"id"`
 }
 
 // FileAccessRuleResourceModel describes the resource data model.
@@ -303,6 +314,9 @@ func (r *FileAccessRuleResource) Create(ctx context.Context, req resource.Create
 	data.Id = types.Int64Value(crResp.GetRuleId())
 	tflog.Info(ctx, fmt.Sprintf("Created file access rule: %d", data.Id.ValueInt64()))
 
+	// Set the identity
+	resp.Diagnostics.Append(resp.Identity.Set(ctx, FileAccessRuleIdentityModel{Id: data.Id})...)
+
 	// Save data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
@@ -382,6 +396,9 @@ func (r *FileAccessRuleResource) Read(ctx context.Context, req resource.ReadRequ
 		data.ProcessTeamIds, _ = types.ListValueFrom(ctx, types.StringType, rule.GetProcessTeamIds())
 	}
 
+	// Set the identity
+	resp.Diagnostics.Append(resp.Identity.Set(ctx, FileAccessRuleIdentityModel{Id: data.Id})...)
+
 	// Save updated data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
@@ -422,4 +439,90 @@ func (r *FileAccessRuleResource) ImportState(ctx context.Context, req resource.I
 		return
 	}
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), id)...)
+}
+
+func (r *FileAccessRuleResource) IdentitySchema(ctx context.Context, req resource.IdentitySchemaRequest, resp *resource.IdentitySchemaResponse) {
+	resp.IdentitySchema = identityschema.Schema{
+		Attributes: map[string]identityschema.Attribute{
+			"id": identityschema.Int64Attribute{
+				RequiredForImport: true,
+			},
+		},
+	}
+}
+
+func NewFileAccessRuleListResource() list.ListResource {
+	return &FileAccessRuleResource{}
+}
+
+func (r *FileAccessRuleResource) ListResourceConfigSchema(ctx context.Context, req list.ListResourceSchemaRequest, resp *list.ListResourceSchemaResponse) {
+	resp.Schema = listschema.Schema{
+		Description: "List all file access rules in the Workshop instance.",
+		Attributes:  map[string]listschema.Attribute{},
+	}
+}
+
+func (r *FileAccessRuleResource) List(ctx context.Context, req list.ListRequest, stream *list.ListResultsStream) {
+	stream.Results = func(push func(list.ListResult) bool) {
+		ret, err := r.client.ListFileAccessRules(ctx, apipb.ListFileAccessRulesRequest_builder{}.Build())
+		if err != nil {
+			result := req.NewListResult(ctx)
+			result.Diagnostics.AddError("Client Error", "Failed to list file access rules: "+err.Error())
+			push(result)
+			return
+		}
+
+		for _, rule := range ret.GetRules() {
+			result := req.NewListResult(ctx)
+			result.DisplayName = rule.GetName()
+
+			result.Diagnostics.Append(result.Identity.Set(ctx, FileAccessRuleIdentityModel{
+				Id: types.Int64Value(rule.GetRuleId()),
+			})...)
+
+			if req.IncludeResource {
+				toListOrNull := func(slice []string) types.List {
+					if len(slice) > 0 {
+						l, _ := types.ListValueFrom(ctx, types.StringType, slice)
+						return l
+					}
+					return types.ListNull(types.StringType)
+				}
+
+				model := FileAccessRuleResourceModel{
+					Id:                        types.Int64Value(rule.GetRuleId()),
+					Tag:                       types.StringValue(rule.GetTag()),
+					Name:                      types.StringValue(rule.GetName()),
+					AllowReadAccess:           types.BoolValue(rule.GetAllowReadAccess()),
+					BlockViolations:           types.BoolValue(rule.GetBlockViolations()),
+					RuleType:                  types.StringValue(rule.GetRuleType().String()),
+					EnableSilentMode:          types.BoolValue(rule.GetEnableSilentMode()),
+					EnableSilentTtyMode:       types.BoolValue(rule.GetEnableSilentTtyMode()),
+					PathLiterals:              toListOrNull(rule.GetPathLiterals()),
+					PathPrefixes:              toListOrNull(rule.GetPathPrefixes()),
+					ProcessBinaryPaths:        toListOrNull(rule.GetProcessBinaryPaths()),
+					ProcessCdHashes:           toListOrNull(rule.GetProcessCdHashes()),
+					ProcessSigningIds:         toListOrNull(rule.GetProcessSigningIds()),
+					ProcessCertificateSha256s: toListOrNull(rule.GetProcessCertificateSha256S()),
+					ProcessTeamIds:            toListOrNull(rule.GetProcessTeamIds()),
+				}
+
+				if rule.GetBlockMessage() != "" {
+					model.BlockMessage = types.StringValue(rule.GetBlockMessage())
+				}
+				if rule.GetEventDetailUrl() != "" {
+					model.EventDetailUrl = types.StringValue(rule.GetEventDetailUrl())
+				}
+				if rule.GetEventDetailText() != "" {
+					model.EventDetailText = types.StringValue(rule.GetEventDetailText())
+				}
+
+				result.Diagnostics.Append(result.Resource.Set(ctx, model)...)
+			}
+
+			if !push(result) {
+				return
+			}
+		}
+	}
 }

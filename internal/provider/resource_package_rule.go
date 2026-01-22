@@ -8,8 +8,11 @@ import (
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
+	"github.com/hashicorp/terraform-plugin-framework/list"
+	listschema "github.com/hashicorp/terraform-plugin-framework/list/schema"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/identityschema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
@@ -28,6 +31,9 @@ import (
 var _ resource.Resource = &PackageRuleResource{}
 var _ resource.ResourceWithConfigure = &PackageRuleResource{}
 var _ resource.ResourceWithImportState = &PackageRuleResource{}
+var _ resource.ResourceWithIdentity = &PackageRuleResource{}
+var _ list.ListResource = &PackageRuleResource{}
+var _ list.ListResourceWithConfigure = &PackageRuleResource{}
 
 func NewPackageRuleResource() resource.Resource {
 	return &PackageRuleResource{}
@@ -36,6 +42,11 @@ func NewPackageRuleResource() resource.Resource {
 // PackageRuleResource defines the resource implementation.
 type PackageRuleResource struct {
 	client svcpb.WorkshopServiceClient
+}
+
+// PackageRuleIdentityModel describes the identity data model.
+type PackageRuleIdentityModel struct {
+	Id types.Int64 `tfsdk:"id"`
 }
 
 // PackageRuleResourceModel describes the resource data model.
@@ -196,6 +207,9 @@ func (r *PackageRuleResource) Create(ctx context.Context, req resource.CreateReq
 	data.Id = types.Int64Value(crResp.GetRuleId())
 	tflog.Info(ctx, fmt.Sprintf("Created package rule: %d", data.Id.ValueInt64()))
 
+	// Set the identity
+	resp.Diagnostics.Append(resp.Identity.Set(ctx, PackageRuleIdentityModel{Id: data.Id})...)
+
 	// Save data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
@@ -250,6 +264,9 @@ func (r *PackageRuleResource) Read(ctx context.Context, req resource.ReadRequest
 		data.MaxDate = types.StringValue(rule.GetMaxDate().AsTime().Format(time.RFC3339))
 	}
 
+	// Set the identity
+	resp.Diagnostics.Append(resp.Identity.Set(ctx, PackageRuleIdentityModel{Id: data.Id})...)
+
 	// Save updated data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
@@ -290,4 +307,73 @@ func (r *PackageRuleResource) ImportState(ctx context.Context, req resource.Impo
 		return
 	}
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), id)...)
+}
+
+func (r *PackageRuleResource) IdentitySchema(ctx context.Context, req resource.IdentitySchemaRequest, resp *resource.IdentitySchemaResponse) {
+	resp.IdentitySchema = identityschema.Schema{
+		Attributes: map[string]identityschema.Attribute{
+			"id": identityschema.Int64Attribute{
+				RequiredForImport: true,
+			},
+		},
+	}
+}
+
+func NewPackageRuleListResource() list.ListResource {
+	return &PackageRuleResource{}
+}
+
+func (r *PackageRuleResource) ListResourceConfigSchema(ctx context.Context, req list.ListResourceSchemaRequest, resp *list.ListResourceSchemaResponse) {
+	resp.Schema = listschema.Schema{
+		Description: "List all package rules in the Workshop instance.",
+		Attributes:  map[string]listschema.Attribute{},
+	}
+}
+
+func (r *PackageRuleResource) List(ctx context.Context, req list.ListRequest, stream *list.ListResultsStream) {
+	stream.Results = func(push func(list.ListResult) bool) {
+		ret, err := r.client.ListPackageRules(ctx, apipb.ListPackageRulesRequest_builder{}.Build())
+		if err != nil {
+			result := req.NewListResult(ctx)
+			result.Diagnostics.AddError("Client Error", "Failed to list package rules: "+err.Error())
+			push(result)
+			return
+		}
+
+		for _, rule := range ret.GetRules() {
+			result := req.NewListResult(ctx)
+			result.DisplayName = rule.GetName()
+
+			result.Diagnostics.Append(result.Identity.Set(ctx, PackageRuleIdentityModel{
+				Id: types.Int64Value(rule.GetRuleId()),
+			})...)
+
+			if req.IncludeResource {
+				model := PackageRuleResourceModel{
+					Id:       types.Int64Value(rule.GetRuleId()),
+					Tag:      types.StringValue(rule.GetTag()),
+					Source:   types.StringValue(rule.GetSource().String()),
+					Name:     types.StringValue(rule.GetName()),
+					Policy:   types.StringValue(rule.GetPolicy().String()),
+					RuleType: types.StringValue(rule.GetRuleType().String()),
+				}
+
+				if rule.GetVersionRegexp() != "" {
+					model.VersionRegexp = types.StringValue(rule.GetVersionRegexp())
+				}
+				if rule.HasMinDate() {
+					model.MinDate = types.StringValue(rule.GetMinDate().AsTime().Format(time.RFC3339))
+				}
+				if rule.HasMaxDate() {
+					model.MaxDate = types.StringValue(rule.GetMaxDate().AsTime().Format(time.RFC3339))
+				}
+
+				result.Diagnostics.Append(result.Resource.Set(ctx, model)...)
+			}
+
+			if !push(result) {
+				return
+			}
+		}
+	}
 }

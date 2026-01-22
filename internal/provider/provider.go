@@ -10,7 +10,7 @@ import (
 	"os"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
-	"github.com/hashicorp/terraform-plugin-framework/function"
+	"github.com/hashicorp/terraform-plugin-framework/list"
 	"github.com/hashicorp/terraform-plugin-framework/provider"
 	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -25,7 +25,7 @@ import (
 
 // Ensure ScaffoldingProvider satisfies various provider interfaces.
 var _ provider.Provider = &NPSProvider{}
-var _ provider.ProviderWithFunctions = &NPSProvider{}
+var _ provider.ProviderWithListResources = &NPSProvider{}
 
 // NPSProvider defines the provider implementation.
 type NPSProvider struct {
@@ -109,10 +109,13 @@ func (p *NPSProvider) Configure(ctx context.Context, req provider.ConfigureReque
 	}
 	client := apipb.NewWorkshopServiceClient(conn)
 
-	resp.DataSourceData = client
-	resp.ResourceData = &NPSProviderResourceData{
+	providerData := &NPSProviderResourceData{
 		Client: client,
 	}
+
+	resp.DataSourceData = client
+	resp.ResourceData = providerData
+	resp.ListResourceData = providerData
 }
 
 func (p *NPSProvider) Resources(ctx context.Context) []func() resource.Resource {
@@ -125,12 +128,18 @@ func (p *NPSProvider) Resources(ctx context.Context) []func() resource.Resource 
 	}
 }
 
-func (p *NPSProvider) DataSources(ctx context.Context) []func() datasource.DataSource {
-	return []func() datasource.DataSource{}
+func (p *NPSProvider) ListResources(ctx context.Context) []func() list.ListResource {
+	return []func() list.ListResource{
+		NewAPIKeyListResource,
+		NewFileAccessRuleListResource,
+		NewPackageRuleListResource,
+		NewRuleListResource,
+		NewTagListResource,
+	}
 }
 
-func (p *NPSProvider) Functions(ctx context.Context) []func() function.Function {
-	return []func() function.Function{}
+func (p *NPSProvider) DataSources(ctx context.Context) []func() datasource.DataSource {
+	return []func() datasource.DataSource{}
 }
 
 func New(version string) func() provider.Provider {
