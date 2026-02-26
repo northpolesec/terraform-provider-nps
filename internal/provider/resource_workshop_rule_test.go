@@ -43,6 +43,12 @@ func TestAccWorkshopRule(t *testing.T) {
 					resource.TestCheckResourceAttr("nps_workshop_rule.yes", "tag", "host:123"),
 				),
 			},
+			// ImportState testing
+			{
+				ResourceName:      "nps_workshop_rule.yes",
+				ImportState:       true,
+				ImportStateVerify: true,
+			},
 			// Delete testing automatically occurs in TestCase
 		},
 	})
