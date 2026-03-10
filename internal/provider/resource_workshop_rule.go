@@ -226,8 +226,7 @@ func (r *RuleResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 	// rule ID will change, so we need to query by the triplet of identifier, rule_type,
 	// and tag instead. This lets Terraform show a diff instead of appearing to create
 	// the rule from scratch.
-	filter := fmt.Sprintf(`rule_id = "%s" OR (identifier = "%s" AND rule_type = "%s" AND tag = "%s")`,
-		data.Id.ValueString(), data.Identifier.ValueString(), data.RuleType.ValueString(), data.Tag.ValueString())
+	filter := ruleReadFilter(data)
 
 	ret, err := r.client.ListRules(ctx, apipb.ListRulesRequest_builder{
 		Filter:   proto.String(filter),
@@ -379,4 +378,16 @@ func (r *RuleResource) List(ctx context.Context, req list.ListRequest, stream *l
 			}
 		}
 	}
+}
+
+// ruleReadFilter builds the filter string for the ListRules API call in Read.
+// During import, only the ID is set, so we must avoid sending empty enum values
+// (like rule_type) which the server would reject.
+func ruleReadFilter(data RuleResourceModel) string {
+	filter := fmt.Sprintf(`rule_id = "%s"`, data.Id.ValueString())
+	if !data.RuleType.IsNull() && !data.RuleType.IsUnknown() && data.RuleType.ValueString() != "" {
+		filter += fmt.Sprintf(` OR (identifier = "%s" AND rule_type = "%s" AND tag = "%s")`,
+			data.Identifier.ValueString(), data.RuleType.ValueString(), data.Tag.ValueString())
+	}
+	return filter
 }
