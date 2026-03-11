@@ -307,12 +307,18 @@ func groupsProtoToModel(ctx context.Context, filter *apipb.DirectorySyncGroupFil
 	for i, g := range groups {
 		tagsVal, d := types.ListValueFrom(ctx, types.StringType, g.GetTags())
 		diags.Append(d...)
+		if diags.HasError() {
+			return types.ListValueMust(groupFilterObjectType, []attr.Value{})
+		}
 
 		obj, d := types.ObjectValue(groupFilterObjectType.AttrTypes, map[string]attr.Value{
 			"id":   types.StringValue(g.GetId()),
 			"tags": tagsVal,
 		})
 		diags.Append(d...)
+		if diags.HasError() {
+			return types.ListValueMust(groupFilterObjectType, []attr.Value{})
+		}
 		groupValues[i] = obj
 	}
 
