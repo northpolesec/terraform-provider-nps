@@ -24,9 +24,9 @@ func TestAccWorkshopDirectorySettings_local(t *testing.T) {
 			// ImportState testing
 			{
 				ResourceName:                         "nps_workshop_directory_settings.test",
-				ImportState:                           true,
-				ImportStateVerify:                     true,
-				ImportStateVerifyIdentifierAttribute:  "directory_type",
+				ImportState:                          true,
+				ImportStateVerify:                    true,
+				ImportStateVerifyIdentifierAttribute: "directory_type",
 			},
 			// Delete testing automatically occurs in TestCase
 		},
@@ -72,9 +72,9 @@ func TestAccWorkshopDirectorySettings_dsync(t *testing.T) {
 			// ImportState testing
 			{
 				ResourceName:                         "nps_workshop_directory_settings.test",
-				ImportState:                           true,
-				ImportStateVerify:                     true,
-				ImportStateVerifyIdentifierAttribute:  "directory_type",
+				ImportState:                          true,
+				ImportStateVerify:                    true,
+				ImportStateVerifyIdentifierAttribute: "directory_type",
 			},
 			// Delete testing automatically occurs in TestCase
 		},
