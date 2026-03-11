@@ -1,4 +1,4 @@
-// Copyright 2025 North Pole Security, Inc.
+// Copyright 2026 North Pole Security, Inc.
 package provider
 
 import (
@@ -279,6 +279,10 @@ func groupsModelToProto(ctx context.Context, list types.List, diags *diag.Diagno
 	for i, g := range groups {
 		var tags []string
 		diags.Append(g.Tags.ElementsAs(ctx, &tags, false)...)
+		if diags.HasError() {
+			diags.AddError("Invalid group filter", fmt.Sprintf("Failed to extract tags for group %q", g.Id.ValueString()))
+			return nil
+		}
 
 		protoGroups[i] = apipb.DirectorySyncGroupFilter_Group_builder{
 			Id:   g.Id.ValueString(),

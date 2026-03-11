@@ -1,4 +1,4 @@
-// Copyright 2025 North Pole Security, Inc.
+// Copyright 2026 North Pole Security, Inc.
 package provider
 
 import (
