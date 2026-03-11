@@ -224,9 +224,14 @@ func (r *PackageRuleResource) Read(ctx context.Context, req resource.ReadRequest
 		return
 	}
 
-	// Query for the rule by ID, or by (name, source, tag) combination
-	filter := fmt.Sprintf(`rule_id = %d OR (name = "%s" AND source = "%s" AND tag = "%s")`,
-		data.Id.ValueInt64(), data.Name.ValueString(), data.Source.ValueString(), data.Tag.ValueString())
+	// Query for the rule by ID, or by (name, source, tag) combination.
+	// During import, only ID is set, so we must avoid sending empty enum values
+	// (like source) which the server would reject.
+	filter := fmt.Sprintf(`rule_id = %d`, data.Id.ValueInt64())
+	if !data.Source.IsNull() && !data.Source.IsUnknown() && data.Source.ValueString() != "" {
+		filter += fmt.Sprintf(` OR (name = "%s" AND source = "%s" AND tag = "%s")`,
+			data.Name.ValueString(), data.Source.ValueString(), data.Tag.ValueString())
+	}
 
 	ret, err := r.client.ListPackageRules(ctx, apipb.ListPackageRulesRequest_builder{
 		Filter:   proto.String(filter),

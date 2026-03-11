@@ -34,6 +34,20 @@ var _ resource.ResourceWithIdentity = &FileAccessRuleResource{}
 var _ list.ListResource = &FileAccessRuleResource{}
 var _ list.ListResourceWithConfigure = &FileAccessRuleResource{}
 
+var fileAccessRuleTypeToFriendly = map[apipb.FileAccessRuleType]string{
+	apipb.FileAccessRuleType_FILE_ACCESS_RULE_TYPE_PATHS_WITH_ALLOWED_PROCESSES: "PathsWithAllowedProcesses",
+	apipb.FileAccessRuleType_FILE_ACCESS_RULE_TYPE_PATHS_WITH_DENIED_PROCESSES:  "PathsWithDeniedProcesses",
+	apipb.FileAccessRuleType_FILE_ACCESS_RULE_TYPE_PROCESSES_WITH_ALLOWED_PATHS: "ProcessesWithAllowedPaths",
+	apipb.FileAccessRuleType_FILE_ACCESS_RULE_TYPE_PROCESSES_WITH_DENIED_PATHS:  "ProcessesWithDeniedPaths",
+}
+
+func fileAccessRuleTypeFriendlyName(rt apipb.FileAccessRuleType) string {
+	if name, ok := fileAccessRuleTypeToFriendly[rt]; ok {
+		return name
+	}
+	return rt.String()
+}
+
 func NewFileAccessRuleResource() resource.Resource {
 	return &FileAccessRuleResource{}
 }
@@ -359,7 +373,7 @@ func (r *FileAccessRuleResource) Read(ctx context.Context, req resource.ReadRequ
 	data.Name = types.StringValue(rule.GetName())
 	data.AllowReadAccess = types.BoolValue(rule.GetAllowReadAccess())
 	data.BlockViolations = types.BoolValue(rule.GetBlockViolations())
-	data.RuleType = types.StringValue(rule.GetRuleType().String())
+	data.RuleType = types.StringValue(fileAccessRuleTypeFriendlyName(rule.GetRuleType()))
 	data.EnableSilentMode = types.BoolValue(rule.GetEnableSilentMode())
 	data.EnableSilentTtyMode = types.BoolValue(rule.GetEnableSilentTtyMode())
 
@@ -495,7 +509,7 @@ func (r *FileAccessRuleResource) List(ctx context.Context, req list.ListRequest,
 					Name:                      types.StringValue(rule.GetName()),
 					AllowReadAccess:           types.BoolValue(rule.GetAllowReadAccess()),
 					BlockViolations:           types.BoolValue(rule.GetBlockViolations()),
-					RuleType:                  types.StringValue(rule.GetRuleType().String()),
+					RuleType:                  types.StringValue(fileAccessRuleTypeFriendlyName(rule.GetRuleType())),
 					EnableSilentMode:          types.BoolValue(rule.GetEnableSilentMode()),
 					EnableSilentTtyMode:       types.BoolValue(rule.GetEnableSilentTtyMode()),
 					PathLiterals:              toListOrNull(rule.GetPathLiterals()),
