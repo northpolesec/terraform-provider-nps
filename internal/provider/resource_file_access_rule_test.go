@@ -19,11 +19,11 @@ func TestAccFileAccessRule(t *testing.T) {
 			{
 				Config: testAccFileAccessRuleResourceConfig("TestRule1", "global"),
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr("nps_file_access_rule.test", "name", "TestRule1"),
-					resource.TestCheckResourceAttr("nps_file_access_rule.test", "tag", "global"),
-					resource.TestCheckResourceAttr("nps_file_access_rule.test", "rule_type", "PathsWithAllowedProcesses"),
-					resource.TestCheckResourceAttr("nps_file_access_rule.test", "allow_read_access", "true"),
-					resource.TestCheckResourceAttr("nps_file_access_rule.test", "block_violations", "false"),
+					resource.TestCheckResourceAttr("nps_workshop_file_access_rule.test", "name", "TestRule1"),
+					resource.TestCheckResourceAttr("nps_workshop_file_access_rule.test", "tag", "global"),
+					resource.TestCheckResourceAttr("nps_workshop_file_access_rule.test", "rule_type", "PathsWithAllowedProcesses"),
+					resource.TestCheckResourceAttr("nps_workshop_file_access_rule.test", "allow_read_access", "true"),
+					resource.TestCheckResourceAttr("nps_workshop_file_access_rule.test", "block_violations", "false"),
 				),
 			},
 			// ImportState testing

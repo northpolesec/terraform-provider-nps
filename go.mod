@@ -3,8 +3,8 @@ module github.com/northpolesec/terraform-provider-nps
 go 1.24.0
 
 require (
-	buf.build/gen/go/northpolesec/workshop-api/grpc/go v1.6.0-20260109224245-0a358247e9c2.1
-	buf.build/gen/go/northpolesec/workshop-api/protocolbuffers/go v1.36.11-20260109224245-0a358247e9c2.1
+	buf.build/gen/go/northpolesec/workshop-api/grpc/go v1.6.1-20260302224235-223a86226ec1.1
+	buf.build/gen/go/northpolesec/workshop-api/protocolbuffers/go v1.36.11-20260302224235-223a86226ec1.1
 	github.com/golang-jwt/jwt/v5 v5.3.0
 	github.com/hashicorp/terraform-plugin-framework v1.16.0
 	github.com/hashicorp/terraform-plugin-framework-validators v0.18.0
@@ -12,13 +12,13 @@ require (
 	github.com/hashicorp/terraform-plugin-log v0.9.0
 	github.com/hashicorp/terraform-plugin-testing v1.13.3
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c
-	golang.org/x/oauth2 v0.31.0
-	google.golang.org/grpc v1.75.1
+	golang.org/x/oauth2 v0.32.0
+	google.golang.org/grpc v1.78.0
 	google.golang.org/protobuf v1.36.11
 )
 
 require (
-	buf.build/gen/go/northpolesec/protos/protocolbuffers/go v1.36.11-20251222234036-85229a4bd2f9.1 // indirect
+	buf.build/gen/go/northpolesec/protos/protocolbuffers/go v1.36.11-20260117000123-a65b2bb0fb6d.1 // indirect
 	github.com/ProtonMail/go-crypto v1.1.6 // indirect
 	github.com/agext/levenshtein v1.2.2 // indirect
 	github.com/apparentlymart/go-textseg/v15 v15.0.0 // indirect
@@ -58,13 +58,13 @@ require (
 	github.com/vmihailenco/msgpack/v5 v5.4.1 // indirect
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
 	github.com/zclconf/go-cty v1.17.0 // indirect
-	golang.org/x/crypto v0.42.0 // indirect
-	golang.org/x/mod v0.27.0 // indirect
-	golang.org/x/net v0.44.0 // indirect
-	golang.org/x/sync v0.17.0 // indirect
-	golang.org/x/sys v0.36.0 // indirect
-	golang.org/x/text v0.29.0 // indirect
-	golang.org/x/tools v0.36.0 // indirect
+	golang.org/x/crypto v0.44.0 // indirect
+	golang.org/x/mod v0.29.0 // indirect
+	golang.org/x/net v0.47.0 // indirect
+	golang.org/x/sync v0.18.0 // indirect
+	golang.org/x/sys v0.38.0 // indirect
+	golang.org/x/text v0.31.0 // indirect
+	golang.org/x/tools v0.38.0 // indirect
 	google.golang.org/appengine v1.6.8 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20250922171735-9219d122eba9 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20251029180050-ab9386a59fda // indirect
 )
