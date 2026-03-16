@@ -20,7 +20,7 @@ Use the navigation to the left to read about the available resources.
 
 ```terraform
 provider "nps" {
-  endpoint = "tenant.workshop.cloud"
+  endpoint = "api.tenant.workshop.cloud"
 }
 ```
 
@@ -42,7 +42,7 @@ The generated token will have the same permissions as the user that logs in.
 
 ```terraform
 provider "nps" {
-  endpoint = "tenant.workshop.cloud"
+  endpoint = "api.tenant.workshop.cloud"
   api_key  = "npsws_sk_aabbbbcccdddeee"
 }
 ```
