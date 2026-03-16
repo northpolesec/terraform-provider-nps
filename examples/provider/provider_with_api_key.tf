@@ -1,4 +1,4 @@
 provider "nps" {
-  endpoint = "tenant.workshop.cloud"
+  endpoint = "api.tenant.workshop.cloud"
   api_key  = "npsws_sk_aabbbbcccdddeee"
 }
