@@ -1,9 +1,9 @@
-buf.build/gen/go/northpolesec/protos/protocolbuffers/go v1.36.11-20260117000123-a65b2bb0fb6d.1 h1:RDMjUTnuOr51+8r550MvMo+vEPbSNzd9s2EMURQ1vRo=
-buf.build/gen/go/northpolesec/protos/protocolbuffers/go v1.36.11-20260117000123-a65b2bb0fb6d.1/go.mod h1:OfafKwDkrVDn7wb5tOCm86GmO5v23MErKzv+H9ZcOts=
-buf.build/gen/go/northpolesec/workshop-api/grpc/go v1.6.1-20260302224235-223a86226ec1.1 h1:6hzAcAicTtGtzFdB/WOxhfGDE/hTYT6Wue6TnAvxRdk=
-buf.build/gen/go/northpolesec/workshop-api/grpc/go v1.6.1-20260302224235-223a86226ec1.1/go.mod h1:s7TzgyKG4jDfBhUqPSj/wpTC218S3EP0EZIfojyv/xs=
-buf.build/gen/go/northpolesec/workshop-api/protocolbuffers/go v1.36.11-20260302224235-223a86226ec1.1 h1:J1AECUGtGmBotz3a8NpS5lotdGzrA6Yj55TNMb9cVCc=
-buf.build/gen/go/northpolesec/workshop-api/protocolbuffers/go v1.36.11-20260302224235-223a86226ec1.1/go.mod h1:WKeN+RQLqLPG6EjPTYomIcFRz4aYhMdaD13NjYc7UAs=
+buf.build/gen/go/northpolesec/protos/protocolbuffers/go v1.36.11-20260415163307-bee1f9b89db6.1 h1:xHIxoGEisHndvBQ28yCA193wV/l132V+PlrAT/7joss=
+buf.build/gen/go/northpolesec/protos/protocolbuffers/go v1.36.11-20260415163307-bee1f9b89db6.1/go.mod h1:OfafKwDkrVDn7wb5tOCm86GmO5v23MErKzv+H9ZcOts=
+buf.build/gen/go/northpolesec/workshop-api/grpc/go v1.6.1-20260429145745-5f3b255bc854.1 h1:wTKMZpbnaCuPM6MP2ZFw3659nvrwZpYdPEsAuI32hO4=
+buf.build/gen/go/northpolesec/workshop-api/grpc/go v1.6.1-20260429145745-5f3b255bc854.1/go.mod h1:+RdsbdrxmO+CipdYMFW/XY5+NSFgpIaCzPDwYbzvTIA=
+buf.build/gen/go/northpolesec/workshop-api/protocolbuffers/go v1.36.11-20260429145745-5f3b255bc854.1 h1:gqcmzxHUI0mcMhQw3/P/V4w+hp52cc8sV7GUXO7E08k=
+buf.build/gen/go/northpolesec/workshop-api/protocolbuffers/go v1.36.11-20260429145745-5f3b255bc854.1/go.mod h1:ix1ATJrVYEDegYpzVZhHYKguysfoFEUci5/d2tfsu0c=
 dario.cat/mergo v1.0.0 h1:AGCNq9Evsj31mOgNPcLyXc+4PNABt905YmuqPYYpBWk=
 dario.cat/mergo v1.0.0/go.mod h1:uNxQE+84aUszobStD9th8a29P2fMDhsBdgRYvZOxGmk=
 github.com/Microsoft/go-winio v0.6.2 h1:F2VQgta7ecxGYO8k3ZZz3RS8fVIXVxONVUPlNERoyfY=
@@ -99,8 +99,8 @@ github.com/hashicorp/terraform-plugin-framework-validators v0.18.0 h1:OQnlOt98ua
 github.com/hashicorp/terraform-plugin-framework-validators v0.18.0/go.mod h1:lZvZvagw5hsJwuY7mAY6KUz45/U6fiDR0CzQAwWD0CA=
 github.com/hashicorp/terraform-plugin-go v0.29.0 h1:1nXKl/nSpaYIUBU1IG/EsDOX0vv+9JxAltQyDMpq5mU=
 github.com/hashicorp/terraform-plugin-go v0.29.0/go.mod h1:vYZbIyvxyy0FWSmDHChCqKvI40cFTDGSb3D8D70i9GM=
-github.com/hashicorp/terraform-plugin-log v0.9.0 h1:i7hOA+vdAItN1/7UrfBqBwvYPQ9TFvymaRGZED3FCV0=
-github.com/hashicorp/terraform-plugin-log v0.9.0/go.mod h1:rKL8egZQ/eXSyDqzLUuwUYLVdlYeamldAHSxjUFADow=
+github.com/hashicorp/terraform-plugin-log v0.10.0 h1:eu2kW6/QBVdN4P3Ju2WiB2W3ObjkAsyfBsL3Wh1fj3g=
+github.com/hashicorp/terraform-plugin-log v0.10.0/go.mod h1:/9RR5Cv2aAbrqcTSdNmY1NRHP4E3ekrXRGjqORpXyB0=
 github.com/hashicorp/terraform-plugin-sdk/v2 v2.38.1 h1:mlAq/OrMlg04IuJT7NpefI1wwtdpWudnEmjuQs04t/4=
 github.com/hashicorp/terraform-plugin-sdk/v2 v2.38.1/go.mod h1:GQhpKVvvuwzD79e8/NZ+xzj+ZpWovdPAe8nfV/skwNU=
 github.com/hashicorp/terraform-plugin-testing v1.13.3 h1:QLi/khB8Z0a5L54AfPrHukFpnwsGL8cwwswj4RZduCo=
