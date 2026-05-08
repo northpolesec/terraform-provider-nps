@@ -5,7 +5,7 @@ go 1.25.8
 require (
 	buf.build/gen/go/northpolesec/workshop-api/grpc/go v1.6.1-20260507223319-99876a167ec9.1
 	buf.build/gen/go/northpolesec/workshop-api/protocolbuffers/go v1.36.11-20260507223319-99876a167ec9.1
-	github.com/golang-jwt/jwt/v5 v5.3.0
+	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/hashicorp/terraform-plugin-framework v1.19.0
 	github.com/hashicorp/terraform-plugin-framework-validators v0.19.0
 	github.com/hashicorp/terraform-plugin-go v0.31.0
