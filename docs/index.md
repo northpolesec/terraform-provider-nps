@@ -9,10 +9,9 @@ description: |-
 The NPS provider allows managing a North Pole Security Workshop instance using
 Terraform.
 
-At present, the provider is limited to managing API keys and Rules but other
-resources will be added in the future.
-
-Use the navigation to the left to read about the available resources.
+Use the navigation to the left to read about the available resources. If there's
+a resource type missing that you would like to manage with Terraform, please let
+us know.
 
 ## Example Usage
 
