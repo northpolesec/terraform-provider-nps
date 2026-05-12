@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/int32validator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/list"
 	listschema "github.com/hashicorp/terraform-plugin-framework/list/schema"
@@ -47,17 +48,24 @@ type RuleIdentityModel struct {
 
 // RuleResourceModel describes the resource data model.
 type RuleResourceModel struct {
-	Identifier  types.String `tfsdk:"identifier"`
-	RuleType    types.String `tfsdk:"rule_type"`
-	Policy      types.String `tfsdk:"policy"`
-	BlockReason types.String `tfsdk:"block_reason"`
-	Tag         types.String `tfsdk:"tag"`
-	Comment     types.String `tfsdk:"comment"`
-	CustomMsg   types.String `tfsdk:"custom_msg"`
-	CustomURL   types.String `tfsdk:"custom_url"`
-	CELExpr     types.String `tfsdk:"cel_expr"`
+	Identifier            types.String                    `tfsdk:"identifier"`
+	RuleType              types.String                    `tfsdk:"rule_type"`
+	Policy                types.String                    `tfsdk:"policy"`
+	BlockReason           types.String                    `tfsdk:"block_reason"`
+	Tag                   types.String                    `tfsdk:"tag"`
+	Comment               types.String                    `tfsdk:"comment"`
+	CustomMsg             types.String                    `tfsdk:"custom_msg"`
+	CustomURL             types.String                    `tfsdk:"custom_url"`
+	CELExpr               types.String                    `tfsdk:"cel_expr"`
+	AffectedHostThreshold *RuleAffectedHostThresholdModel `tfsdk:"affected_host_threshold"`
 
 	Id types.String `tfsdk:"id"`
+}
+
+// RuleAffectedHostThresholdModel describes the affected_host_threshold block.
+type RuleAffectedHostThresholdModel struct {
+	HostCount types.Int32 `tfsdk:"host_count"`
+	Days      types.Int32 `tfsdk:"days"`
 }
 
 func (r *RuleResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -132,6 +140,31 @@ func (r *RuleResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 				},
 			},
 		},
+
+		Blocks: map[string]schema.Block{
+			"affected_host_threshold": schema.SingleNestedBlock{
+				Description:         "If set, the server will count how many hosts (matching the rule's tag) have run a binary covered by this rule's identifier and rule_type within the lookback window. If the count is greater than or equal to host_count, the rule is not created and a FailedPrecondition error is returned. The check applies the same identifier match used for resolution; for CEL/SEATBELT rules the count reflects the underlying identifier and may overstate the true impact. Note: this block is only supported in Workshop 2025.5 and later; in earlier versions it will be ignored by the server.",
+				MarkdownDescription: "If set, the server will count how many hosts (matching the rule's tag) have run a binary covered by this rule's `identifier` and `rule_type` within the lookback window. If the count is greater than or equal to `host_count`, the rule is not created and a `FailedPrecondition` error is returned. The check applies the same identifier match used for resolution; for `CEL`/`SEATBELT` rules the count reflects the underlying identifier and may overstate the true impact. **Note:** this block is only supported in Workshop 2025.5 and later; in earlier versions it will be ignored by the server.",
+				Attributes: map[string]schema.Attribute{
+					"host_count": schema.Int32Attribute{
+						Description:         "The rule is rejected when at least this many hosts have run a covered binary within the lookback window. Must be greater than 0. Required when affected_host_threshold is set.",
+						MarkdownDescription: "The rule is rejected when at least this many hosts have run a covered binary within the lookback window. Must be greater than `0`. Required when `affected_host_threshold` is set.",
+						Optional:            true,
+						Validators: []validator.Int32{
+							int32validator.AtLeast(1),
+						},
+					},
+					"days": schema.Int32Attribute{
+						Description:         "Lookback window in days for counting hosts. Must be in [1, 90]. Required when affected_host_threshold is set.",
+						MarkdownDescription: "Lookback window in days for counting hosts. Must be in `[1, 90]`. Required when `affected_host_threshold` is set.",
+						Optional:            true,
+						Validators: []validator.Int32{
+							int32validator.Between(1, 90),
+						},
+					},
+				},
+			},
+		},
 	}
 }
 
@@ -147,6 +180,23 @@ func (r *RuleResource) ConfigValidators(ctx context.Context) []resource.ConfigVa
 
 			if data.Policy.ValueString() == "CEL" && data.CELExpr.ValueString() == "" {
 				resp.Diagnostics.AddError("CEL expression is required", "CEL expression is required when policy is set to CEL")
+			}
+
+			if data.AffectedHostThreshold != nil {
+				if data.AffectedHostThreshold.HostCount.IsNull() {
+					resp.Diagnostics.AddAttributeError(
+						path.Root("affected_host_threshold").AtName("host_count"),
+						"host_count is required",
+						"host_count is required when affected_host_threshold is set",
+					)
+				}
+				if data.AffectedHostThreshold.Days.IsNull() {
+					resp.Diagnostics.AddAttributeError(
+						path.Root("affected_host_threshold").AtName("days"),
+						"days is required",
+						"days is required when affected_host_threshold is set",
+					)
+				}
 			}
 		}),
 	}
@@ -194,9 +244,21 @@ func (r *RuleResource) Create(ctx context.Context, req resource.CreateRequest, r
 		CelExpr:    data.CELExpr.ValueString(),
 	}.Build()
 
-	crResp, err := r.client.CreateRule(ctx, apipb.CreateRuleRequest_builder{
+	createReq := apipb.CreateRuleRequest_builder{
 		Rule: rule,
-	}.Build())
+	}
+	if data.AffectedHostThreshold != nil {
+		threshold := apipb.CreateRuleRequest_AffectedHostThreshold_builder{}
+		if !data.AffectedHostThreshold.HostCount.IsNull() && !data.AffectedHostThreshold.HostCount.IsUnknown() {
+			threshold.HostCount = proto.Int32(data.AffectedHostThreshold.HostCount.ValueInt32())
+		}
+		if !data.AffectedHostThreshold.Days.IsNull() && !data.AffectedHostThreshold.Days.IsUnknown() {
+			threshold.Days = proto.Int32(data.AffectedHostThreshold.Days.ValueInt32())
+		}
+		createReq.AffectedHostThreshold = threshold.Build()
+	}
+
+	crResp, err := r.client.CreateRule(ctx, createReq.Build())
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Failed to create rule: %v", err))
 		return
