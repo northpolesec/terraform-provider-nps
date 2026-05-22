@@ -4,11 +4,14 @@ package provider
 import (
 	"context"
 	"fmt"
+	"math"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/identityschema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
@@ -64,6 +67,10 @@ func (r *MPASettingsResource) Schema(ctx context.Context, req resource.SchemaReq
 				Description:         "Number of workshop-admin approvals required before executing an action. The requestor cannot approve their own request.",
 				MarkdownDescription: "Number of workshop-admin approvals required before executing an action. The requestor cannot approve their own request.",
 				Optional:            true,
+				Validators: []validator.Int64{
+					// Restrict to uint32 range so tfInt64ToUint32Ptr cannot wrap.
+					int64validator.Between(0, int64(math.MaxUint32)),
+				},
 			},
 			"exclude_api_keys": schema.BoolAttribute{
 				Description:         "If true, API key requests bypass MPA and execute immediately.",

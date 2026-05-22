@@ -4,6 +4,7 @@ package provider
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"google.golang.org/protobuf/types/known/durationpb"
@@ -47,7 +48,7 @@ func TestDurationConversion(t *testing.T) {
 	if got := durationToTFString(nil); !got.IsNull() {
 		t.Fatalf("expected null for nil duration, got %v", got)
 	}
-	d := durationpb.New(5e9) // 5s in nanoseconds
+	d := durationpb.New(5 * time.Second)
 	if got := durationToTFString(d); got.ValueString() != "5s" {
 		t.Fatalf("expected '5s', got %v", got)
 	}

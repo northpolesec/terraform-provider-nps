@@ -5,12 +5,14 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/identityschema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
@@ -138,7 +140,6 @@ var (
 		"reversing_labs":  riskReversingLabsObjectType,
 		"blockable_rules": riskBlockableRulesObjectType,
 	}
-	riskLocalPluginsObjectType = types.ObjectType{AttrTypes: riskLocalPluginsAttrTypes}
 
 	riskHttpHeaderAttrTypes = map[string]attr.Type{
 		"key":   types.StringType,
@@ -216,24 +217,32 @@ func (r *RiskEngineSettingsResource) Schema(ctx context.Context, req resource.Sc
 						Optional:            true,
 						MarkdownDescription: "VirusTotal plugin settings.",
 						Attributes: map[string]schema.Attribute{
-							"enabled":           schema.BoolAttribute{Optional: true},
-							"api_key":           schema.StringAttribute{Optional: true, Sensitive: true},
-							"cache_ttl":         schema.StringAttribute{Optional: true, MarkdownDescription: "Cache TTL as a Go duration."},
-							"num_cache_entries": schema.Int64Attribute{Optional: true, MarkdownDescription: "Number of cache entries (0-50,000)."},
-							"exclude_engines":   schema.ListAttribute{Optional: true, ElementType: types.StringType, MarkdownDescription: "Engines to exclude from VirusTotal responses."},
-							"filter_expr":       schema.StringAttribute{Optional: true, MarkdownDescription: "CEL expression evaluated before invoking the plugin."},
+							"enabled":   schema.BoolAttribute{Optional: true},
+							"api_key":   schema.StringAttribute{Optional: true, Sensitive: true},
+							"cache_ttl": schema.StringAttribute{Optional: true, MarkdownDescription: "Cache TTL as a Go duration."},
+							"num_cache_entries": schema.Int64Attribute{
+								Optional:            true,
+								MarkdownDescription: "Number of cache entries (0-50,000).",
+								Validators:          []validator.Int64{int64validator.Between(0, 50000)},
+							},
+							"exclude_engines": schema.ListAttribute{Optional: true, ElementType: types.StringType, MarkdownDescription: "Engines to exclude from VirusTotal responses."},
+							"filter_expr":     schema.StringAttribute{Optional: true, MarkdownDescription: "CEL expression evaluated before invoking the plugin."},
 						},
 					},
 					"reversing_labs": schema.SingleNestedAttribute{
 						Optional:            true,
 						MarkdownDescription: "ReversingLabs plugin settings.",
 						Attributes: map[string]schema.Attribute{
-							"enabled":           schema.BoolAttribute{Optional: true},
-							"username":          schema.StringAttribute{Optional: true},
-							"password":          schema.StringAttribute{Optional: true, Sensitive: true},
-							"cache_ttl":         schema.StringAttribute{Optional: true, MarkdownDescription: "Cache TTL as a Go duration."},
-							"num_cache_entries": schema.Int64Attribute{Optional: true, MarkdownDescription: "Number of cache entries (0-50,000)."},
-							"filter_expr":       schema.StringAttribute{Optional: true},
+							"enabled":   schema.BoolAttribute{Optional: true},
+							"username":  schema.StringAttribute{Optional: true},
+							"password":  schema.StringAttribute{Optional: true, Sensitive: true},
+							"cache_ttl": schema.StringAttribute{Optional: true, MarkdownDescription: "Cache TTL as a Go duration."},
+							"num_cache_entries": schema.Int64Attribute{
+								Optional:            true,
+								MarkdownDescription: "Number of cache entries (0-50,000).",
+								Validators:          []validator.Int64{int64validator.Between(0, 50000)},
+							},
+							"filter_expr": schema.StringAttribute{Optional: true},
 						},
 					},
 					"blockable_rules": schema.SingleNestedAttribute{

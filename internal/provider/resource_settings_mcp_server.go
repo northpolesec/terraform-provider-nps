@@ -5,9 +5,12 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/identityschema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
@@ -51,11 +54,19 @@ func (r *MCPServerSettingsResource) Schema(ctx context.Context, req resource.Sch
 				Description:         "Whether the MCP server is enabled.",
 				MarkdownDescription: "Whether the MCP server is enabled.",
 				Optional:            true,
+				Computed:            true,
+				PlanModifiers: []planmodifier.Bool{
+					boolplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"read_write": schema.BoolAttribute{
 				Description:         "Whether the MCP server allows read-write operations. If false, the server is read-only.",
 				MarkdownDescription: "Whether the MCP server allows read-write operations. If false, the server is read-only.",
 				Optional:            true,
+				Computed:            true,
+				PlanModifiers: []planmodifier.Bool{
+					boolplanmodifier.UseStateForUnknown(),
+				},
 			},
 		},
 	}
@@ -93,22 +104,39 @@ func (r *MCPServerSettingsResource) Create(ctx context.Context, req resource.Cre
 		return
 	}
 
-	tflog.Info(ctx, "Created MCP server settings resource")
-
-	resp.Diagnostics.Append(resp.Identity.Set(ctx, MCPServerSettingsIdentityModel{Id: types.StringValue("mcp_server_settings")})...)
-	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
-}
-
-func (r *MCPServerSettingsResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
-	ret, err := r.client.GetMCPServerSettings(ctx, apipb.GetMCPServerSettingsRequest_builder{}.Build())
-	if err != nil {
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Failed to get MCP server settings: %v", err))
+	final, ok := r.fetchMCPServerSettings(ctx, &resp.Diagnostics)
+	if !ok {
 		return
 	}
 
-	data := MCPServerSettingsResourceModel{
+	tflog.Info(ctx, "Created MCP server settings resource")
+
+	resp.Diagnostics.Append(resp.Identity.Set(ctx, MCPServerSettingsIdentityModel{Id: types.StringValue("mcp_server_settings")})...)
+	resp.Diagnostics.Append(resp.State.Set(ctx, &final)...)
+}
+
+// fetchMCPServerSettings reads the current server-side settings so that
+// authoritative values can be written to Terraform state after a Create or
+// Update. Required because the schema attributes are Optional+Computed: state
+// may legitimately diverge from the plan (e.g. when the user removes an
+// attribute from config and the partial-update RPC leaves the server value
+// unchanged).
+func (r *MCPServerSettingsResource) fetchMCPServerSettings(ctx context.Context, diags *diag.Diagnostics) (MCPServerSettingsResourceModel, bool) {
+	ret, err := r.client.GetMCPServerSettings(ctx, apipb.GetMCPServerSettingsRequest_builder{}.Build())
+	if err != nil {
+		diags.AddError("Client Error", fmt.Sprintf("Failed to get MCP server settings: %v", err))
+		return MCPServerSettingsResourceModel{}, false
+	}
+	return MCPServerSettingsResourceModel{
 		Enabled:   boolPtrToTF(ret.Enabled),
 		ReadWrite: boolPtrToTF(ret.ReadWrite),
+	}, true
+}
+
+func (r *MCPServerSettingsResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
+	data, ok := r.fetchMCPServerSettings(ctx, &resp.Diagnostics)
+	if !ok {
+		return
 	}
 
 	resp.Diagnostics.Append(resp.Identity.Set(ctx, MCPServerSettingsIdentityModel{Id: types.StringValue("mcp_server_settings")})...)
@@ -142,8 +170,17 @@ func (r *MCPServerSettingsResource) Update(ctx context.Context, req resource.Upd
 		tflog.Info(ctx, "Updated MCP server settings")
 	}
 
+	// Refresh state from the server so we reflect authoritative values (in
+	// particular when the user removed an attribute from config: the partial
+	// update RPC leaves the server value in place, so state must mirror it
+	// rather than the plan's null).
+	final, ok := r.fetchMCPServerSettings(ctx, &resp.Diagnostics)
+	if !ok {
+		return
+	}
+
 	resp.Diagnostics.Append(resp.Identity.Set(ctx, MCPServerSettingsIdentityModel{Id: types.StringValue("mcp_server_settings")})...)
-	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+	resp.Diagnostics.Append(resp.State.Set(ctx, &final)...)
 }
 
 func (r *MCPServerSettingsResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {

@@ -131,11 +131,15 @@ func (r *AutoUpdateSettingsResource) Read(ctx context.Context, req resource.Read
 		return
 	}
 
-	s := ret.GetSettings()
 	data := AutoUpdateSettingsResourceModel{
-		Mode:      types.StringValue(s.GetMode().String()),
-		StartHour: int32PtrToTFInt64(s.StartHour),
-		EndHour:   int32PtrToTFInt64(s.EndHour),
+		Mode:      types.StringValue(apipb.AutoUpdateMode_AUTO_UPDATE_MODE_UNSPECIFIED.String()),
+		StartHour: types.Int64Null(),
+		EndHour:   types.Int64Null(),
+	}
+	if s := ret.GetSettings(); s != nil {
+		data.Mode = types.StringValue(s.GetMode().String())
+		data.StartHour = int32PtrToTFInt64(s.StartHour)
+		data.EndHour = int32PtrToTFInt64(s.EndHour)
 	}
 
 	resp.Diagnostics.Append(resp.Identity.Set(ctx, AutoUpdateSettingsIdentityModel{Id: types.StringValue("auto_update_settings")})...)
@@ -174,8 +178,11 @@ func (r *AutoUpdateSettingsResource) Delete(ctx context.Context, req resource.De
 }
 
 func (r *AutoUpdateSettingsResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	// Placeholder state; Read is invoked immediately after import and
+	// overwrites this with the authoritative server values. The placeholder
+	// must satisfy the schema's OneOf validator on Mode.
 	resp.Diagnostics.Append(resp.State.Set(ctx, &AutoUpdateSettingsResourceModel{
-		Mode: types.StringValue("AUTO_UPDATE_MODE_UNSPECIFIED"),
+		Mode: types.StringValue("AUTO_UPDATE_MODE_DISABLED"),
 	})...)
 }
 
