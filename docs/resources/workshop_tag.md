@@ -3,18 +3,23 @@
 page_title: "nps_workshop_tag Resource - nps"
 subcategory: ""
 description: |-
-  The nps_workshop_tag resource manages tags.
+  The nps_workshop_tag resource manages tags and their assignment to directory groups.
 ---
 
 # nps_workshop_tag (Resource)
 
-The `nps_workshop_tag` resource manages tags.
+The `nps_workshop_tag` resource manages tags and their assignment to directory groups.
 
 ## Example Usage
 
 ```terraform
 resource "nps_workshop_tag" "dev" {
   name = "dev"
+
+  # Assign the tag to directory groups by name and/or by identity-provider ID.
+  # The provider merges this tag into each group's existing tags.
+  group_names   = ["dev", "founders"]
+  group_idp_ids = ["01gf8i8338jz53a"]
 }
 ```
 
@@ -23,4 +28,9 @@ resource "nps_workshop_tag" "dev" {
 
 ### Required
 
-- `name` (String) The name for this tag
+- `name` (String) The name for this tag. Changing the name forces replacement.
+
+### Optional
+
+- `group_idp_ids` (Set of String) Identity-provider IDs of directory groups this tag should be assigned to. Resolved and merged the same way as `group_names`.
+- `group_names` (Set of String) Names of directory groups this tag should be assigned to. Workshop manages group tags by internal ID; the provider resolves each name via `ListGroups` and merges this tag into the group's existing tags. A name that matches zero or more than one group is an error.
