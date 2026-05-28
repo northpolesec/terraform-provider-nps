@@ -14,6 +14,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/identityschema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"google.golang.org/protobuf/proto"
@@ -64,7 +66,12 @@ type groupRef struct {
 	value string
 }
 
-func (g groupRef) key() string { return g.field + "=" + g.value }
+// resolvedGroupRef pairs a user-supplied group reference with the resolved
+// group object.
+type resolvedGroupRef struct {
+	ref groupRef
+	g   *apipb.Group
+}
 
 func (r *TagResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_workshop_tag"
@@ -77,9 +84,12 @@ func (r *TagResource) Schema(ctx context.Context, req resource.SchemaRequest, re
 
 		Attributes: map[string]schema.Attribute{
 			"name": schema.StringAttribute{
-				Description:         "The name for this tag",
-				MarkdownDescription: "The name for this tag",
+				Description:         "The name for this tag. Changing the name forces replacement.",
+				MarkdownDescription: "The name for this tag. Changing the name forces replacement.",
 				Required:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
 			},
 			"group_names": schema.SetAttribute{
 				Description:         "Names of directory groups this tag should be assigned to. Workshop manages group tags by internal ID; the provider resolves each name via ListGroups and merges this tag into the group's existing tags. A name that matches zero or more than one group is an error.",
@@ -198,23 +208,6 @@ func (r *TagResource) setGroupTag(ctx context.Context, g *apipb.Group, tag strin
 	return err
 }
 
-// applyGroupTag resolves ref and sets the tag's presence on it, recording any
-// failure in diags.
-func (r *TagResource) applyGroupTag(ctx context.Context, ref groupRef, tag string, present bool, diags *diag.Diagnostics) {
-	g, err := r.resolveGroup(ctx, ref)
-	if err != nil {
-		diags.AddError("Client Error", fmt.Sprintf("Failed to resolve group %s %q: %v", ref.field, ref.value, err))
-		return
-	}
-	if err := r.setGroupTag(ctx, g, tag, present); err != nil {
-		verb := "assign tag to"
-		if !present {
-			verb = "remove tag from"
-		}
-		diags.AddError("Client Error", fmt.Sprintf("Failed to %s group %s %q: %v", verb, ref.field, ref.value, err))
-	}
-}
-
 func (r *TagResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var data TagResourceModel
 
@@ -228,24 +221,67 @@ func (r *TagResource) Create(ctx context.Context, req resource.CreateRequest, re
 		return
 	}
 
-	_, err := r.client.CreateTag(ctx, apipb.CreateTagRequest_builder{
-		Tag: proto.String(data.Name.ValueString()),
-	}.Build())
-	if err != nil {
+	// Pre-resolve every group before touching the backend so typos, missing
+	// groups, and ambiguous matches surface before we create the tag and
+	// leave orphan state behind.
+	resolved := make([]resolvedGroupRef, 0, len(refs))
+	for _, ref := range refs {
+		g, err := r.resolveGroup(ctx, ref)
+		if err != nil {
+			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Failed to resolve group %s %q: %v", ref.field, ref.value, err))
+			return
+		}
+		resolved = append(resolved, resolvedGroupRef{ref, g})
+	}
+
+	tag := data.Name.ValueString()
+	if _, err := r.client.CreateTag(ctx, apipb.CreateTagRequest_builder{
+		Tag: proto.String(tag),
+	}.Build()); err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Failed to create tag: %v", err))
 		return
 	}
-	tflog.Info(ctx, fmt.Sprintf("Created tag: %q", data.Name))
+	tflog.Info(ctx, fmt.Sprintf("Created tag: %q", tag))
 
-	for _, ref := range refs {
-		r.applyGroupTag(ctx, ref, data.Name.ValueString(), true, &resp.Diagnostics)
-	}
-	if resp.Diagnostics.HasError() {
-		return
+	// Track successful assignments so we can best-effort revert them if a
+	// later assignment fails.
+	var assigned []resolvedGroupRef
+	for _, rr := range resolved {
+		if err := r.setGroupTag(ctx, rr.g, tag, true); err != nil {
+			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Failed to assign tag to group %s %q: %v", rr.ref.field, rr.ref.value, err))
+			r.rollbackCreate(ctx, tag, assigned)
+			return
+		}
+		assigned = append(assigned, rr)
 	}
 
 	resp.Diagnostics.Append(resp.Identity.Set(ctx, TagIdentityModel{Name: data.Name})...)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+}
+
+// rollbackCreate makes a best-effort attempt to undo a partially-applied
+// Create: it strips the tag from each group that was successfully assigned
+// and then deletes the tag itself. Failures are logged but not surfaced,
+// since the original Create error has already been recorded and a follow-up
+// terraform apply will reconcile any residue.
+func (r *TagResource) rollbackCreate(ctx context.Context, tag string, assigned []resolvedGroupRef) {
+	for _, done := range assigned {
+		// Re-resolve so the group's current tag list is fresh; using the
+		// stale snapshot would no-op since it doesn't yet include the tag.
+		fresh, err := r.resolveGroup(ctx, done.ref)
+		if err != nil {
+			tflog.Warn(ctx, fmt.Sprintf("rollback: failed to re-resolve group %s %q: %v", done.ref.field, done.ref.value, err))
+			continue
+		}
+		if err := r.setGroupTag(ctx, fresh, tag, false); err != nil {
+			tflog.Warn(ctx, fmt.Sprintf("rollback: failed to unassign tag from group %s %q: %v", done.ref.field, done.ref.value, err))
+		}
+	}
+	if _, err := r.client.DeleteTag(ctx, apipb.DeleteTagRequest_builder{
+		Tag: proto.String(tag),
+	}.Build()); err != nil {
+		tflog.Warn(ctx, fmt.Sprintf("rollback: failed to delete tag %q: %v", tag, err))
+	}
 }
 
 func (r *TagResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
@@ -336,27 +372,55 @@ func (r *TagResource) Update(ctx context.Context, req resource.UpdateRequest, re
 		return
 	}
 
-	planSet := make(map[string]groupRef, len(planRefs))
-	for _, ref := range planRefs {
-		planSet[ref.key()] = ref
+	// Key the diff by the resolved group ID so two refs that alias the same
+	// group (e.g. one by name, one by idp_id) collapse to a single target and
+	// don't produce spurious remove-then-add operations or, worse, strip the
+	// tag when only the alias form changed. Skip groups that no longer exist
+	// in state: they can't be unassigned anyway and TF will reconcile next run.
+	resolveSet := func(refs []groupRef, skipMissing bool) (map[string]resolvedGroupRef, bool) {
+		out := make(map[string]resolvedGroupRef, len(refs))
+		for _, ref := range refs {
+			g, err := r.resolveGroup(ctx, ref)
+			if err != nil {
+				if skipMissing && errors.Is(err, errGroupNotFound) {
+					continue
+				}
+				resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Failed to resolve group %s %q: %v", ref.field, ref.value, err))
+				return nil, false
+			}
+			// First ref wins; arbitrary but stable per Update call.
+			if _, ok := out[g.GetId()]; !ok {
+				out[g.GetId()] = resolvedGroupRef{ref, g}
+			}
+		}
+		return out, true
 	}
-	stateSet := make(map[string]groupRef, len(stateRefs))
-	for _, ref := range stateRefs {
-		stateSet[ref.key()] = ref
+
+	planSet, ok := resolveSet(planRefs, false)
+	if !ok {
+		return
+	}
+	stateSet, ok := resolveSet(stateRefs, true)
+	if !ok {
+		return
 	}
 
 	tag := plan.Name.ValueString()
 
 	// Remove the tag from groups no longer in the plan.
-	for k, ref := range stateSet {
-		if _, ok := planSet[k]; !ok {
-			r.applyGroupTag(ctx, ref, tag, false, &resp.Diagnostics)
+	for id, rr := range stateSet {
+		if _, ok := planSet[id]; !ok {
+			if err := r.setGroupTag(ctx, rr.g, tag, false); err != nil {
+				resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Failed to remove tag from group %s %q: %v", rr.ref.field, rr.ref.value, err))
+			}
 		}
 	}
 	// Add the tag to groups newly in the plan.
-	for k, ref := range planSet {
-		if _, ok := stateSet[k]; !ok {
-			r.applyGroupTag(ctx, ref, tag, true, &resp.Diagnostics)
+	for id, rr := range planSet {
+		if _, ok := stateSet[id]; !ok {
+			if err := r.setGroupTag(ctx, rr.g, tag, true); err != nil {
+				resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Failed to assign tag to group %s %q: %v", rr.ref.field, rr.ref.value, err))
+			}
 		}
 	}
 	if resp.Diagnostics.HasError() {

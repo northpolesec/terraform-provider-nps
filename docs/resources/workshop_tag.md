@@ -28,7 +28,7 @@ resource "nps_workshop_tag" "dev" {
 
 ### Required
 
-- `name` (String) The name for this tag
+- `name` (String) The name for this tag. Changing the name forces replacement.
 
 ### Optional
 
