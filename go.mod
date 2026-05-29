@@ -3,7 +3,7 @@ module github.com/northpolesec/terraform-provider-nps
 go 1.25.8
 
 require (
-	buf.build/gen/go/northpolesec/workshop-api/grpc/go v1.6.2-20260527220725-f73a5fe821d2.1
+	buf.build/gen/go/northpolesec/workshop-api/grpc/go v1.6.2-20260528161747-5747ced168ef.1
 	buf.build/gen/go/northpolesec/workshop-api/protocolbuffers/go v1.36.11-20260528161747-5747ced168ef.1
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/hashicorp/terraform-plugin-framework v1.19.0
