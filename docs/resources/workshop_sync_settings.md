@@ -54,7 +54,6 @@ resource "nps_workshop_sync_settings" "dev_settings" {
 ### Optional
 
 - `allowed_path_regex` (String) Regex matching paths whose executions are allowed. Set to an empty string to explicitly clear any lower-precedence tag's value.
-- `batch_size` (Number) Number of rules pushed per sync batch.
 - `blocked_path_regex` (String) Regex matching paths whose executions are blocked. Set to an empty string to explicitly clear any lower-precedence tag's value.
 - `cel_fallback_rule` (Block List) CEL fallback rules evaluated when no static rule matches. The block may be repeated; the order is preserved. (see [below for nested schema](#nestedblock--cel_fallback_rule))
 - `client_mode` (String) Santa client mode for hosts in this tag. One of: `MONITOR`, `LOCKDOWN`, `STANDALONE`.

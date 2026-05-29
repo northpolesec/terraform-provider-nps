@@ -3,6 +3,7 @@ package provider
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -82,7 +83,6 @@ func TestSyncSettingsRoundtrip(t *testing.T) {
 	original := apipb.SyncSettings_builder{
 		Tag:                                     "dev",
 		ClientMode:                              apipb.ClientMode_MONITOR,
-		BatchSize:                               proto.Uint32(50),
 		EnableTransitiveRules:                   proto.Bool(true),
 		AllowedPathRegex:                        proto.String(""),
 		BlockedPathRegex:                        proto.String("/tmp/.*"),
@@ -137,9 +137,6 @@ func TestSyncSettingsRoundtrip(t *testing.T) {
 	}
 	if round.GetClientMode() != apipb.ClientMode_MONITOR {
 		t.Errorf("client_mode mismatch: %v", round.GetClientMode())
-	}
-	if round.GetBatchSize() != 50 {
-		t.Errorf("batch_size mismatch: %d", round.GetBatchSize())
 	}
 	if !round.GetEnableTransitiveRules() {
 		t.Errorf("enable_transitive_rules mismatch")
@@ -201,8 +198,9 @@ func TestSyncSettingsRoundtrip(t *testing.T) {
 	if !enc.HasRemount() {
 		t.Errorf("encrypted_removable_media_policy should be remount")
 	}
-	if got := enc.GetRemount().GetFlags(); len(got) != 2 || got[0] != "nodev" {
-		t.Errorf("encrypted remount flags mismatch: %v", got)
+	wantFlags := []string{"nodev", "nosuid"}
+	if got := enc.GetRemount().GetFlags(); !reflect.DeepEqual(got, wantFlags) {
+		t.Errorf("encrypted remount flags mismatch: got %v, want %v", got, wantFlags)
 	}
 }
 

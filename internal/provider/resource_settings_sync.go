@@ -4,7 +4,6 @@ package provider
 import (
 	"context"
 	"fmt"
-	"math"
 	"regexp"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
@@ -49,7 +48,6 @@ type SyncSettingsResourceModel struct {
 	Tag types.String `tfsdk:"tag"`
 
 	ClientMode                 types.String `tfsdk:"client_mode"`
-	BatchSize                  types.Int64  `tfsdk:"batch_size"`
 	EnableTransitiveRules      types.Bool   `tfsdk:"enable_transitive_rules"`
 	TelemetryEnabled           types.Bool   `tfsdk:"telemetry_enabled"`
 	NetworkExtensionEnabled    types.Bool   `tfsdk:"network_extension_enabled"`
@@ -139,14 +137,6 @@ func (r *SyncSettingsResource) Schema(ctx context.Context, req resource.SchemaRe
 				Optional:            true,
 				Validators: []validator.String{
 					stringvalidator.OneOf(syncSettingsClientModeValues...),
-				},
-			},
-			"batch_size": schema.Int64Attribute{
-				Description:         "Number of rules pushed per sync batch.",
-				MarkdownDescription: "Number of rules pushed per sync batch.",
-				Optional:            true,
-				Validators: []validator.Int64{
-					int64validator.Between(0, math.MaxUint32),
 				},
 			},
 			"enable_transitive_rules": schema.BoolAttribute{
@@ -492,6 +482,23 @@ func (r *SyncSettingsResource) Delete(ctx context.Context, req resource.DeleteRe
 }
 
 func (r *SyncSettingsResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	// Validate up front so we fail with a clear message instead of writing an
+	// invalid tag into state and erroring later at Read time when the value is
+	// interpolated into the ListSyncSettings filter.
+	if l := len(req.ID); l < 1 || l > 42 {
+		resp.Diagnostics.AddError(
+			"Invalid import ID",
+			fmt.Sprintf("tag %q must be between 1 and 42 characters, got %d", req.ID, l),
+		)
+		return
+	}
+	if !syncSettingsTagRegex.MatchString(req.ID) {
+		resp.Diagnostics.AddError(
+			"Invalid import ID",
+			fmt.Sprintf("tag %q must contain only letters, digits, periods, colons, hyphens, and underscores", req.ID),
+		)
+		return
+	}
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("tag"), req.ID)...)
 }
 
@@ -617,7 +624,6 @@ func syncSettingsModelToProto(ctx context.Context, m *SyncSettingsResourceModel)
 
 	b := apipb.SyncSettings_builder{
 		Tag:                                     m.Tag.ValueString(),
-		BatchSize:                               tfInt64ToUint32Ptr(m.BatchSize),
 		EnableTransitiveRules:                   tfBoolToPtr(m.EnableTransitiveRules),
 		AllowedPathRegex:                        tfStringToPtr(m.AllowedPathRegex),
 		BlockedPathRegex:                        tfStringToPtr(m.BlockedPathRegex),
@@ -747,7 +753,6 @@ func syncSettingsProtoToModel(ctx context.Context, ss *apipb.SyncSettings) (Sync
 
 	m := SyncSettingsResourceModel{
 		Tag:                   types.StringValue(ss.GetTag()),
-		BatchSize:             uint32PtrToTFInt64(ss.BatchSize),
 		EnableTransitiveRules: boolPtrToTF(ss.EnableTransitiveRules),
 		AllowedPathRegex:      stringPtrToTF(ss.AllowedPathRegex),
 		BlockedPathRegex:      stringPtrToTF(ss.BlockedPathRegex),
