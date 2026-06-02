@@ -132,6 +132,7 @@ func (p *NPSProvider) Resources(ctx context.Context) []func() resource.Resource 
 		NewRiskEngineSettingsResource,
 		NewRuleResource,
 		NewSyncAuthSettingsResource,
+		NewSyncSettingsResource,
 		NewTagResource,
 	}
 }
