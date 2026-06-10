@@ -3,12 +3,12 @@
 page_title: "nps_workshop_tag Resource - nps"
 subcategory: ""
 description: |-
-  The nps_workshop_tag resource manages tags and their assignment to directory groups.
+  The nps_workshop_tag resource manages tags and their assignment to directory groups. Creating a tag does not enable it: a tag has no effect until it is added to the tag ordering managed by the nps_workshop_tag_order resource. A tag that is not in the ordering will not apply to any host. Use nps_workshop_tag_order to enable a tag and set its precedence relative to other tags.
 ---
 
 # nps_workshop_tag (Resource)
 
-The `nps_workshop_tag` resource manages tags and their assignment to directory groups.
+The `nps_workshop_tag` resource manages tags and their assignment to directory groups. Creating a tag does not enable it: a tag has no effect until it is added to the tag ordering managed by the `nps_workshop_tag_order` resource. A tag that is not in the ordering will not apply to any host. Use `nps_workshop_tag_order` to enable a tag and set its precedence relative to other tags.
 
 ## Example Usage
 

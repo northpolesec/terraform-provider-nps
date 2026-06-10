@@ -79,8 +79,8 @@ func (r *TagResource) Metadata(ctx context.Context, req resource.MetadataRequest
 
 func (r *TagResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description:         "The nps_workshop_tag resource manages tags and their assignment to directory groups.",
-		MarkdownDescription: "The `nps_workshop_tag` resource manages tags and their assignment to directory groups.",
+		Description:         "The nps_workshop_tag resource manages tags and their assignment to directory groups. Creating a tag does not enable it: a tag has no effect until it is added to the tag ordering managed by the nps_workshop_tag_order resource. A tag that is not in the ordering will not apply to any host. Use nps_workshop_tag_order to enable a tag and set its precedence relative to other tags.",
+		MarkdownDescription: "The `nps_workshop_tag` resource manages tags and their assignment to directory groups. Creating a tag does not enable it: a tag has no effect until it is added to the tag ordering managed by the `nps_workshop_tag_order` resource. A tag that is not in the ordering will not apply to any host. Use `nps_workshop_tag_order` to enable a tag and set its precedence relative to other tags.",
 
 		Attributes: map[string]schema.Attribute{
 			"name": schema.StringAttribute{
