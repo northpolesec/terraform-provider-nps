@@ -4,7 +4,7 @@ go 1.25.8
 
 require (
 	buf.build/gen/go/northpolesec/workshop-api/grpc/go v1.6.2-20260618204414-89f75916dc41.1
-	buf.build/gen/go/northpolesec/workshop-api/protocolbuffers/go v1.36.11-20260618204414-89f75916dc41.1
+	buf.build/gen/go/northpolesec/workshop-api/protocolbuffers/go v1.36.11-20260622204644-e8640b40528a.1
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/hashicorp/terraform-plugin-framework v1.19.0
 	github.com/hashicorp/terraform-plugin-framework-validators v0.19.0
@@ -19,7 +19,7 @@ require (
 
 require (
 	buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go v1.36.11-20260415201107-50325440f8f2.1 // indirect
-	buf.build/gen/go/northpolesec/protos/protocolbuffers/go v1.36.11-20260512171310-ee8b2b41a12d.1 // indirect
+	buf.build/gen/go/northpolesec/protos/protocolbuffers/go v1.36.11-20260618192259-0c525ad667e7.1 // indirect
 	github.com/ProtonMail/go-crypto v1.4.1 // indirect
 	github.com/agext/levenshtein v1.2.2 // indirect
 	github.com/apparentlymart/go-textseg/v15 v15.0.0 // indirect
