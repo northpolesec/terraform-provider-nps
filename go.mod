@@ -3,6 +3,7 @@ module github.com/northpolesec/terraform-provider-nps
 go 1.25.8
 
 require (
+	buf.build/gen/go/northpolesec/protos/protocolbuffers/go v1.36.11-20260618192259-0c525ad667e7.1
 	buf.build/gen/go/northpolesec/workshop-api/grpc/go v1.6.2-20260626013844-9055e8e897d2.1
 	buf.build/gen/go/northpolesec/workshop-api/protocolbuffers/go v1.36.11-20260626013844-9055e8e897d2.1
 	github.com/golang-jwt/jwt/v5 v5.3.1
@@ -19,7 +20,6 @@ require (
 
 require (
 	buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go v1.36.11-20260415201107-50325440f8f2.1 // indirect
-	buf.build/gen/go/northpolesec/protos/protocolbuffers/go v1.36.11-20260618192259-0c525ad667e7.1 // indirect
 	github.com/ProtonMail/go-crypto v1.4.1 // indirect
 	github.com/agext/levenshtein v1.2.2 // indirect
 	github.com/apparentlymart/go-textseg/v15 v15.0.0 // indirect
