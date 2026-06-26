@@ -147,7 +147,7 @@ func (r *PackageRuleResource) Schema(ctx context.Context, req resource.SchemaReq
 			// whenever the rule changes.
 			"id": schema.Int64Attribute{
 				Computed:            true,
-				MarkdownDescription: "The automatically generated ID of this package rule",
+				MarkdownDescription: "The server-generated ID of this package rule. This ID is reassigned on every upsert, including in-place updates, so it must not be relied on as a stable identifier across applies.",
 			},
 		},
 	}

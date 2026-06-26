@@ -252,7 +252,7 @@ func (r *FileAccessRuleResource) Schema(ctx context.Context, req resource.Schema
 			// whenever the rule changes.
 			"id": schema.Int64Attribute{
 				Computed:            true,
-				MarkdownDescription: "The automatically generated ID of this file access rule",
+				MarkdownDescription: "The server-generated ID of this file access rule. This ID is reassigned on every upsert, including in-place updates, so it must not be relied on as a stable identifier across applies.",
 			},
 		},
 	}

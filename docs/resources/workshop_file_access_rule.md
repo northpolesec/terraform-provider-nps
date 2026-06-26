@@ -81,7 +81,7 @@ resource "nps_workshop_file_access_rule" "ChromeCookies" {
 
 ### Read-Only
 
-- `id` (Number) The automatically generated ID of this file access rule
+- `id` (Number) The server-generated ID of this file access rule. This ID is reassigned on every upsert, including in-place updates, so it must not be relied on as a stable identifier across applies.
 
 ## Import
 

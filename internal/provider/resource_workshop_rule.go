@@ -97,6 +97,14 @@ func (m blockReasonDefault) PlanModifyString(ctx context.Context, req planmodifi
 		return
 	}
 
+	// The policy may reference an unknown value (e.g. another resource's
+	// computed attribute). We can't resolve the default until it is known, so
+	// leave block_reason unknown to be resolved on a later plan.
+	if policy.IsUnknown() {
+		resp.PlanValue = types.StringUnknown()
+		return
+	}
+
 	resp.PlanValue = resolveBlockReason(policy.ValueString())
 }
 
@@ -155,8 +163,8 @@ func (r *RuleResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 				},
 			},
 			"block_reason": schema.StringAttribute{
-				Description:         "The block reason for this rule. The possible values are: BLOCK_REASON_POLICY and BLOCK_REASON_MALICIOUS.",
-				MarkdownDescription: "The block reason for this rule. The possible values are: `BLOCK_REASON_POLICY`, and `BLOCK_REASON_MALICIOUS`.",
+				Description:         "The block reason for this rule. Valid values are BLOCK_REASON_POLICY and BLOCK_REASON_MALICIOUS. For blocklist-family policies an unset value defaults to BLOCK_REASON_POLICY; leave it unset for non-blocklist policies, which cannot have a block reason.",
+				MarkdownDescription: "The block reason for this rule. Valid values are `BLOCK_REASON_POLICY` and `BLOCK_REASON_MALICIOUS`. For blocklist-family policies an unset value defaults to `BLOCK_REASON_POLICY`; leave it unset for non-blocklist policies, which cannot have a block reason.",
 				Optional:            true,
 				// Computed + blockReasonDefault: for blocklist policies the server
 				// treats an unset block_reason as BLOCK_REASON_POLICY. We resolve
@@ -206,7 +214,7 @@ func (r *RuleResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 			// whenever the rule changes.
 			"id": schema.StringAttribute{
 				Computed:            true,
-				MarkdownDescription: "The automatically generated ID of this rule",
+				MarkdownDescription: "The server-generated ID of this rule. This ID is reassigned on every upsert, including in-place updates, so it must not be relied on as a stable identifier across applies.",
 			},
 		},
 

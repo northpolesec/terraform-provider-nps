@@ -25,8 +25,9 @@ type fakeWorkshopClient struct {
 	createErr error
 	newID     int64 // returned ruleId on create (int64-keyed resources)
 
-	created     bool
-	deleteCalls int
+	created       bool
+	deleteCalls   int
+	lastCreateReq *apipb.CreateRuleRequest // captured for payload assertions
 }
 
 func (f *fakeWorkshopClient) CreateRule(ctx context.Context, in *apipb.CreateRuleRequest, _ ...grpc.CallOption) (*apipb.CreateRuleResponse, error) {
@@ -34,6 +35,7 @@ func (f *fakeWorkshopClient) CreateRule(ctx context.Context, in *apipb.CreateRul
 		return nil, f.createErr
 	}
 	f.created = true
+	f.lastCreateReq = in
 	return apipb.CreateRuleResponse_builder{RuleId: proto.String("rule-new")}.Build(), nil
 }
 
@@ -124,6 +126,44 @@ func TestUpsertRuleUpsertsAndNeverDeletes(t *testing.T) {
 	// during an update (key changes are RequiresReplace, handled by Delete).
 	if fake.deleteCalls != 0 {
 		t.Errorf("Update must not delete; got %d delete calls", fake.deleteCalls)
+	}
+}
+
+// TestUpsertRulePropagatesBlockReason verifies the block_reason on the plan
+// (already resolved by blockReasonDefault) is sent on the upsert request. It
+// covers both the defaulted POLICY value and an explicit MALICIOUS value, and
+// confirms an unset reason is not sent.
+func TestUpsertRulePropagatesBlockReason(t *testing.T) {
+	cases := []struct {
+		name        string
+		blockReason types.String
+		want        apipb.Rule_BlockReason
+	}{
+		{"defaulted policy", types.StringValue("BLOCK_REASON_POLICY"), apipb.Rule_BLOCK_REASON_POLICY},
+		{"explicit malicious", types.StringValue("BLOCK_REASON_MALICIOUS"), apipb.Rule_BLOCK_REASON_MALICIOUS},
+		{"unset", types.StringNull(), apipb.Rule_BLOCK_REASON_UNSPECIFIED},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			fake := &fakeWorkshopClient{}
+			r := &RuleResource{client: fake}
+
+			plan := RuleResourceModel{
+				Identifier:  types.StringValue("abc"),
+				RuleType:    types.StringValue("BINARY"),
+				Tag:         types.StringValue("global"),
+				Policy:      types.StringValue("BLOCKLIST"),
+				BlockReason: c.blockReason,
+			}
+
+			if _, diags := r.upsertRule(context.Background(), plan); diags.HasError() {
+				t.Fatalf("unexpected error diags: %v", diags)
+			}
+			got := fake.lastCreateReq.GetRule().GetBlockReason()
+			if got != c.want {
+				t.Errorf("block_reason: got %v, want %v", got, c.want)
+			}
+		})
 	}
 }
 

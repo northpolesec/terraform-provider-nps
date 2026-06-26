@@ -56,4 +56,4 @@ resource "nps_workshop_package_rule" "example" {
 
 ### Read-Only
 
-- `id` (Number) The automatically generated ID of this package rule
+- `id` (Number) The server-generated ID of this package rule. This ID is reassigned on every upsert, including in-place updates, so it must not be relied on as a stable identifier across applies.
