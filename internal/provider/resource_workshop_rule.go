@@ -16,6 +16,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/identityschema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/northpolesec/terraform-provider-nps/internal/utils"
@@ -118,14 +119,20 @@ func (r *RuleResource) Metadata(ctx context.Context, req resource.MetadataReques
 
 func (r *RuleResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description:         "The nps_workshop_rule resource manages Rules. Management of rules requires the read:rules and write:rules permissions.",
-		MarkdownDescription: "The `nps_workshop_rule` resource manages Rules.\n\nManagement of rules requires the `read:rules` and `write:rules` permissions.",
+		Description:         "The nps_workshop_rule resource manages Rules. Management of rules requires the read:rules and write:rules permissions. Changing identifier, rule_type, or tag forces replacement; add a create_before_destroy lifecycle block to avoid a window where the rule does not exist.",
+		MarkdownDescription: "The `nps_workshop_rule` resource manages Rules.\n\nManagement of rules requires the `read:rules` and `write:rules` permissions.\n\nUpdates to non-key fields (such as `policy` or `comment`) are applied atomically in place. Changing the rule's natural key (`identifier`, `rule_type`, or `tag`) forces the rule to be replaced: by default Terraform destroys the old rule before creating the new one, leaving a brief window with no rule in place. To avoid that window, add a `create_before_destroy` lifecycle block:\n\n```hcl\nresource \"nps_workshop_rule\" \"example\" {\n  # ...\n  lifecycle {\n    create_before_destroy = true\n  }\n}\n```",
 
 		Attributes: map[string]schema.Attribute{
 			"identifier": schema.StringAttribute{
 				Description:         "The identifier for this rule. The format of this identifier depends on the rule type.",
 				MarkdownDescription: "The identifier for this rule. The format of this identifier depends on the rule type.",
 				Required:            true,
+				// Part of the natural key (identifier, rule_type, tag). The upsert
+				// only supersedes the old rule when the key matches, so changing the
+				// key must replace rather than update in place.
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
 			},
 			"rule_type": schema.StringAttribute{
 				Description:         "The type of this rule. The possible values are: BINARY, CERTIFICATE, TEAMID, SIGNINGID, and CDHASH.",
@@ -133,6 +140,10 @@ func (r *RuleResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 				Required:            true,
 				Validators: []validator.String{
 					stringvalidator.OneOf(utils.ProtoEnumToList(apipb.RuleType(0).Descriptor())...),
+				},
+				// Part of the natural key; see identifier.
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
 				},
 			},
 			"policy": schema.StringAttribute{
@@ -153,7 +164,9 @@ func (r *RuleResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 				// produce a perpetual diff against the server-assigned POLICY.
 				Computed: true,
 				Validators: []validator.String{
-					stringvalidator.OneOf(utils.ProtoEnumToList(apipb.Rule_BlockReason(0).Descriptor())...),
+					// Only the meaningful block reasons; BLOCK_REASON_UNSPECIFIED is
+					// reserved for the unset/default case handled by blockReasonDefault.
+					stringvalidator.OneOf("BLOCK_REASON_POLICY", "BLOCK_REASON_MALICIOUS"),
 				},
 				PlanModifiers: []planmodifier.String{
 					blockReasonDefault{},
@@ -163,6 +176,10 @@ func (r *RuleResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 				Description:         "The tag for this rule. The tag determines which hosts this rule will apply to. The tag must already exist in Workshop.",
 				MarkdownDescription: "The tag for this rule. The tag determines which hosts this rule will apply to. The tag must already exist in Workshop.",
 				Required:            true,
+				// Part of the natural key; see identifier.
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
 			},
 			"cel_expr": schema.StringAttribute{
 				Description:         "A CEL expression to evaluate when this rule matches. Only valid when the policy is set to CEL.",
@@ -397,14 +414,13 @@ func (r *RuleResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 }
 
 func (r *RuleResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var plan, state RuleResourceModel
+	var plan RuleResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
-	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	newID, diags := r.upsertRule(ctx, plan, state)
+	newID, diags := r.upsertRule(ctx, plan)
 	resp.Diagnostics.Append(diags...)
 	if newID.IsNull() {
 		return
@@ -416,14 +432,13 @@ func (r *RuleResource) Update(ctx context.Context, req resource.UpdateRequest, r
 }
 
 // upsertRule performs an atomic update via the CreateRule upsert RPC and
-// returns the new rule ID. CreateRule is an upsert: when the (tag, rule_type,
-// identifier) key matches an existing rule, the server atomically supersedes it
-// and returns a new ID, so a failed update leaves the old rule in place. When
-// the key changed, the upsert instead created a distinct new rule and left the
-// old one active, so we delete the old rule afterwards. A failed cleanup is a
-// warning, not an error: the new rule is already in place. Returns a null ID
-// (with an error diagnostic) if the upsert itself failed.
-func (r *RuleResource) upsertRule(ctx context.Context, plan, state RuleResourceModel) (types.String, diag.Diagnostics) {
+// returns the new rule ID. CreateRule is an upsert: the server supersedes the
+// existing rule sharing this rule's (tag, rule_type, identifier) key and
+// returns a new ID, so the update is atomic and a failure leaves the old rule
+// in place. The key attributes are RequiresReplace, so Update only ever changes
+// non-key fields where the server is guaranteed to supersede; we never delete
+// the old rule ourselves. Returns a null ID (with diagnostics) on failure.
+func (r *RuleResource) upsertRule(ctx context.Context, plan RuleResourceModel) (types.String, diag.Diagnostics) {
 	var diags diag.Diagnostics
 
 	crResp, err := r.client.CreateRule(ctx, buildCreateRuleRequest(plan))
@@ -431,23 +446,7 @@ func (r *RuleResource) upsertRule(ctx context.Context, plan, state RuleResourceM
 		diags.AddError("Client Error", fmt.Sprintf("Failed to update rule: %v", err))
 		return types.StringNull(), diags
 	}
-	newID := types.StringValue(crResp.GetRuleId())
-
-	keyChanged := !plan.Identifier.Equal(state.Identifier) ||
-		!plan.RuleType.Equal(state.RuleType) ||
-		!plan.Tag.Equal(state.Tag)
-	if keyChanged && state.Id.ValueString() != "" {
-		if _, err := r.client.DeleteRule(ctx, apipb.DeleteRuleRequest_builder{
-			RuleId: proto.String(state.Id.ValueString()),
-		}.Build()); err != nil {
-			diags.AddWarning(
-				"Failed to delete superseded rule",
-				fmt.Sprintf("The updated rule was created (ID %s), but deleting the old rule (ID %s) failed: %v. You may need to delete it manually.",
-					newID.ValueString(), state.Id.ValueString(), err),
-			)
-		}
-	}
-	return newID, diags
+	return types.StringValue(crResp.GetRuleId()), diags
 }
 
 func (r *RuleResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {

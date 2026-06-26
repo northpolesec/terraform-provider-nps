@@ -15,6 +15,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/identityschema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
@@ -71,14 +73,20 @@ func (r *PackageRuleResource) Metadata(ctx context.Context, req resource.Metadat
 
 func (r *PackageRuleResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description:         "The nps_workshop_package_rule resource manages Package Rules. Package rules sync identifiers from GAL for a package. Management of package rules requires the read:rules and write:rules permissions.",
-		MarkdownDescription: "The `nps_workshop_package_rule` resource manages Package Rules.\n\nPackage rules sync identifiers from GAL for a package.\n\nManagement of package rules requires the `read:rules` and `write:rules` permissions.",
+		Description:         "The nps_workshop_package_rule resource manages Package Rules. Package rules sync identifiers from GAL for a package. Management of package rules requires the read:rules and write:rules permissions. Changing tag, name, or source forces replacement; add a create_before_destroy lifecycle block to avoid a window where the rule does not exist.",
+		MarkdownDescription: "The `nps_workshop_package_rule` resource manages Package Rules.\n\nPackage rules sync identifiers from GAL for a package.\n\nManagement of package rules requires the `read:rules` and `write:rules` permissions.\n\nUpdates to non-key fields (such as `policy`) are applied atomically in place. Changing the rule's natural key (`tag`, `name`, or `source`) forces the rule to be replaced: by default Terraform destroys the old rule before creating the new one, leaving a brief window with no rule in place. To avoid that window, add a `create_before_destroy` lifecycle block:\n\n```hcl\nresource \"nps_workshop_package_rule\" \"example\" {\n  # ...\n  lifecycle {\n    create_before_destroy = true\n  }\n}\n```",
 
 		Attributes: map[string]schema.Attribute{
 			"tag": schema.StringAttribute{
 				Description:         "The tag for this package rule. The tag determines which hosts this rule will apply to. The tag must already exist in Workshop.",
 				MarkdownDescription: "The tag for this package rule. The tag determines which hosts this rule will apply to. The tag must already exist in Workshop.",
 				Required:            true,
+				// Part of the natural key (tag, name, source). The upsert only
+				// supersedes the old rule when the key matches, so changing the key
+				// must replace rather than update in place.
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
 			},
 			"source": schema.StringAttribute{
 				Description:         "The package source (e.g., PACKAGE_SOURCE_HOMEBREW, PACKAGE_SOURCE_NPM).",
@@ -87,11 +95,19 @@ func (r *PackageRuleResource) Schema(ctx context.Context, req resource.SchemaReq
 				Validators: []validator.String{
 					stringvalidator.OneOf(utils.ProtoEnumToList(apipb.PackageSource(0).Descriptor())...),
 				},
+				// Part of the natural key; see tag.
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
 			},
 			"name": schema.StringAttribute{
 				Description:         "The package name (e.g., \"wget\", \"express\").",
 				MarkdownDescription: "The package name (e.g., `wget`, `express`).",
 				Required:            true,
+				// Part of the natural key; see tag.
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
 			},
 			"policy": schema.StringAttribute{
 				Description:         "The policy for execution rules created from this package rule.",
@@ -286,14 +302,13 @@ func buildPackageRule(data PackageRuleResourceModel, diags *diag.Diagnostics) *a
 }
 
 func (r *PackageRuleResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var plan, state PackageRuleResourceModel
+	var plan PackageRuleResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
-	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	newID, diags := r.upsertPackageRule(ctx, plan, state)
+	newID, diags := r.upsertPackageRule(ctx, plan)
 	resp.Diagnostics.Append(diags...)
 	if newID.IsNull() {
 		return
@@ -306,12 +321,13 @@ func (r *PackageRuleResource) Update(ctx context.Context, req resource.UpdateReq
 }
 
 // upsertPackageRule performs an atomic update via the CreatePackageRule upsert
-// RPC (keyed on (tag, name, source)) and returns the new rule ID. A matching
-// rule is atomically superseded, so a failed update leaves the old rule in
-// place. When the key changed, the upsert created a distinct new rule and left
-// the old one active, so we delete the old rule afterwards (a failed cleanup is
-// a warning, not an error). Returns a null ID (with diagnostics) on failure.
-func (r *PackageRuleResource) upsertPackageRule(ctx context.Context, plan, state PackageRuleResourceModel) (types.Int64, diag.Diagnostics) {
+// RPC (keyed on (tag, name, source)) and returns the new rule ID. The server
+// supersedes the existing rule sharing this key and returns a new ID, so the
+// update is atomic and a failure leaves the old rule in place. The key
+// attributes are RequiresReplace, so Update only ever changes non-key fields
+// where the server is guaranteed to supersede; we never delete the old rule
+// ourselves. Returns a null ID (with diagnostics) on failure.
+func (r *PackageRuleResource) upsertPackageRule(ctx context.Context, plan PackageRuleResourceModel) (types.Int64, diag.Diagnostics) {
 	var diags diag.Diagnostics
 
 	rule := buildPackageRule(plan, &diags)
@@ -326,23 +342,7 @@ func (r *PackageRuleResource) upsertPackageRule(ctx context.Context, plan, state
 		diags.AddError("Client Error", fmt.Sprintf("Failed to update package rule: %v", err))
 		return types.Int64Null(), diags
 	}
-	newID := types.Int64Value(crResp.GetRuleId())
-
-	keyChanged := !plan.Tag.Equal(state.Tag) ||
-		!plan.Name.Equal(state.Name) ||
-		!plan.Source.Equal(state.Source)
-	if keyChanged && !state.Id.IsNull() {
-		if _, err := r.client.DeletePackageRule(ctx, apipb.DeletePackageRuleRequest_builder{
-			RuleId: proto.Int64(state.Id.ValueInt64()),
-		}.Build()); err != nil {
-			diags.AddWarning(
-				"Failed to delete superseded package rule",
-				fmt.Sprintf("The updated rule was created (ID %d), but deleting the old rule (ID %d) failed: %v. You may need to delete it manually.",
-					newID.ValueInt64(), state.Id.ValueInt64(), err),
-			)
-		}
-	}
-	return newID, diags
+	return types.Int64Value(crResp.GetRuleId()), diags
 }
 
 func (r *PackageRuleResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {

@@ -16,16 +16,17 @@ import (
 
 // fakeWorkshopClient embeds the full client interface (so it satisfies it) and
 // only overrides the rule create/delete RPCs the update path uses. Any other
-// call panics, which is what we want for a focused unit test.
+// call panics, which is what we want for a focused unit test. The Delete*
+// methods record a call so tests can assert Update never deletes (the server
+// supersedes the old rule; deletion only happens via the resource's Delete).
 type fakeWorkshopClient struct {
 	svcpb.WorkshopServiceClient
 
 	createErr error
-	deleteErr error
-	newID     int64 // returned ruleId on create
+	newID     int64 // returned ruleId on create (int64-keyed resources)
 
-	created   bool
-	deletedID int64 // 0 means no delete happened (rule IDs are non-zero)
+	created     bool
+	deleteCalls int
 }
 
 func (f *fakeWorkshopClient) CreateRule(ctx context.Context, in *apipb.CreateRuleRequest, _ ...grpc.CallOption) (*apipb.CreateRuleResponse, error) {
@@ -37,11 +38,7 @@ func (f *fakeWorkshopClient) CreateRule(ctx context.Context, in *apipb.CreateRul
 }
 
 func (f *fakeWorkshopClient) DeleteRule(ctx context.Context, in *apipb.DeleteRuleRequest, _ ...grpc.CallOption) (*apipb.DeleteRuleResponse, error) {
-	if f.deleteErr != nil {
-		return nil, f.deleteErr
-	}
-	// rule IDs are strings here; record that delete happened.
-	f.deletedID = 1
+	f.deleteCalls++
 	return apipb.DeleteRuleResponse_builder{}.Build(), nil
 }
 
@@ -54,10 +51,7 @@ func (f *fakeWorkshopClient) CreateFileAccessRule(ctx context.Context, in *apipb
 }
 
 func (f *fakeWorkshopClient) DeleteFileAccessRule(ctx context.Context, in *apipb.DeleteFileAccessRuleRequest, _ ...grpc.CallOption) (*apipb.DeleteFileAccessRuleResponse, error) {
-	if f.deleteErr != nil {
-		return nil, f.deleteErr
-	}
-	f.deletedID = in.GetRuleId()
+	f.deleteCalls++
 	return apipb.DeleteFileAccessRuleResponse_builder{}.Build(), nil
 }
 
@@ -70,10 +64,7 @@ func (f *fakeWorkshopClient) CreatePackageRule(ctx context.Context, in *apipb.Cr
 }
 
 func (f *fakeWorkshopClient) DeletePackageRule(ctx context.Context, in *apipb.DeletePackageRuleRequest, _ ...grpc.CallOption) (*apipb.DeletePackageRuleResponse, error) {
-	if f.deleteErr != nil {
-		return nil, f.deleteErr
-	}
-	f.deletedID = in.GetRuleId()
+	f.deleteCalls++
 	return apipb.DeletePackageRuleResponse_builder{}.Build(), nil
 }
 
@@ -108,21 +99,18 @@ func TestResolveBlockReason(t *testing.T) {
 
 // --- workshop_rule -------------------------------------------------------
 
-func TestUpsertRuleKeyUnchanged(t *testing.T) {
+func TestUpsertRuleUpsertsAndNeverDeletes(t *testing.T) {
 	fake := &fakeWorkshopClient{}
 	r := &RuleResource{client: fake}
 
-	state := RuleResourceModel{
+	plan := RuleResourceModel{
 		Identifier: types.StringValue("abc"),
 		RuleType:   types.StringValue("BINARY"),
 		Tag:        types.StringValue("global"),
-		Policy:     types.StringValue("ALLOWLIST"),
-		Id:         types.StringValue("rule-old"),
+		Policy:     types.StringValue("BLOCKLIST"),
 	}
-	plan := state
-	plan.Policy = types.StringValue("BLOCKLIST") // content change, key identical
 
-	newID, diags := r.upsertRule(context.Background(), plan, state)
+	newID, diags := r.upsertRule(context.Background(), plan)
 	if diags.HasError() {
 		t.Fatalf("unexpected error diags: %v", diags)
 	}
@@ -132,184 +120,82 @@ func TestUpsertRuleKeyUnchanged(t *testing.T) {
 	if !fake.created {
 		t.Error("expected CreateRule (upsert) to be called")
 	}
-	if fake.deletedID != 0 {
-		t.Error("key unchanged: old rule must NOT be deleted (server supersedes it)")
+	// The server supersedes the old rule; the provider must never delete it
+	// during an update (key changes are RequiresReplace, handled by Delete).
+	if fake.deleteCalls != 0 {
+		t.Errorf("Update must not delete; got %d delete calls", fake.deleteCalls)
 	}
 }
 
-func TestUpsertRuleKeyChangedDeletesOld(t *testing.T) {
-	fake := &fakeWorkshopClient{}
-	r := &RuleResource{client: fake}
-
-	state := RuleResourceModel{
-		Identifier: types.StringValue("abc"),
-		RuleType:   types.StringValue("BINARY"),
-		Tag:        types.StringValue("global"),
-		Id:         types.StringValue("rule-old"),
-	}
-	plan := state
-	plan.Identifier = types.StringValue("def") // key change
-
-	newID, diags := r.upsertRule(context.Background(), plan, state)
-	if diags.HasError() {
-		t.Fatalf("unexpected error diags: %v", diags)
-	}
-	if newID.ValueString() != "rule-new" {
-		t.Errorf("expected new ID rule-new, got %q", newID.ValueString())
-	}
-	if fake.deletedID == 0 {
-		t.Error("key changed: old rule must be deleted")
-	}
-}
-
-func TestUpsertRuleCreateErrorReturnsNullAndDoesNotDelete(t *testing.T) {
+func TestUpsertRuleCreateErrorReturnsNull(t *testing.T) {
 	fake := &fakeWorkshopClient{createErr: errors.New("boom")}
 	r := &RuleResource{client: fake}
 
-	state := RuleResourceModel{
+	plan := RuleResourceModel{
 		Identifier: types.StringValue("abc"),
 		RuleType:   types.StringValue("BINARY"),
 		Tag:        types.StringValue("global"),
-		Id:         types.StringValue("rule-old"),
+		Policy:     types.StringValue("BLOCKLIST"),
 	}
-	plan := state
-	plan.Identifier = types.StringValue("def")
 
-	newID, diags := r.upsertRule(context.Background(), plan, state)
+	newID, diags := r.upsertRule(context.Background(), plan)
 	if !diags.HasError() {
 		t.Error("expected an error diagnostic when the upsert fails")
 	}
 	if !newID.IsNull() {
 		t.Errorf("expected null ID on failure, got %q", newID.ValueString())
 	}
-	if fake.deletedID != 0 {
-		t.Error("upsert failed: the old rule must be left untouched")
-	}
-}
-
-func TestUpsertRuleDeleteFailureIsWarningNotError(t *testing.T) {
-	fake := &fakeWorkshopClient{deleteErr: errors.New("nope")}
-	r := &RuleResource{client: fake}
-
-	state := RuleResourceModel{
-		Identifier: types.StringValue("abc"),
-		RuleType:   types.StringValue("BINARY"),
-		Tag:        types.StringValue("global"),
-		Id:         types.StringValue("rule-old"),
-	}
-	plan := state
-	plan.Identifier = types.StringValue("def") // key change triggers delete
-
-	newID, diags := r.upsertRule(context.Background(), plan, state)
-	if diags.HasError() {
-		t.Errorf("a failed cleanup should be a warning, not an error: %v", diags)
-	}
-	if diags.WarningsCount() != 1 {
-		t.Errorf("expected 1 warning, got %d", diags.WarningsCount())
-	}
-	if newID.ValueString() != "rule-new" {
-		t.Errorf("new rule should still be tracked, got %q", newID.ValueString())
+	if fake.deleteCalls != 0 {
+		t.Errorf("upsert failed: nothing should be deleted; got %d delete calls", fake.deleteCalls)
 	}
 }
 
 // --- file_access_rule ----------------------------------------------------
 
-func TestUpsertFileAccessRuleKeyChangeDeletesOld(t *testing.T) {
+func TestUpsertFileAccessRuleUpsertsAndNeverDeletes(t *testing.T) {
 	fake := &fakeWorkshopClient{newID: 99}
 	r := &FileAccessRuleResource{client: fake}
 
-	state := FileAccessRuleResourceModel{
+	plan := FileAccessRuleResourceModel{
 		Tag:      types.StringValue("global"),
-		Name:     types.StringValue("old-name"),
+		Name:     types.StringValue("name"),
 		RuleType: types.StringValue("PathsWithAllowedProcesses"),
-		Id:       types.Int64Value(42),
 	}
-	plan := state
-	plan.Name = types.StringValue("new-name") // key change
 
-	newID, diags := r.upsertFileAccessRule(context.Background(), plan, state)
+	newID, diags := r.upsertFileAccessRule(context.Background(), plan)
 	if diags.HasError() {
 		t.Fatalf("unexpected error diags: %v", diags)
 	}
 	if newID.ValueInt64() != 99 {
 		t.Errorf("expected new ID 99, got %d", newID.ValueInt64())
 	}
-	if fake.deletedID != 42 {
-		t.Errorf("key changed: expected delete of old ID 42, got %d", fake.deletedID)
-	}
-}
-
-func TestUpsertFileAccessRuleKeyUnchangedNoDelete(t *testing.T) {
-	fake := &fakeWorkshopClient{newID: 99}
-	r := &FileAccessRuleResource{client: fake}
-
-	state := FileAccessRuleResourceModel{
-		Tag:      types.StringValue("global"),
-		Name:     types.StringValue("name"),
-		RuleType: types.StringValue("PathsWithAllowedProcesses"),
-		Id:       types.Int64Value(42),
-	}
-	plan := state
-	plan.BlockViolations = types.BoolValue(true) // content-only change
-
-	_, diags := r.upsertFileAccessRule(context.Background(), plan, state)
-	if diags.HasError() {
-		t.Fatalf("unexpected error diags: %v", diags)
-	}
-	if fake.deletedID != 0 {
-		t.Errorf("key unchanged: old rule must not be deleted, deleted %d", fake.deletedID)
+	if fake.deleteCalls != 0 {
+		t.Errorf("Update must not delete; got %d delete calls", fake.deleteCalls)
 	}
 }
 
 // --- package_rule --------------------------------------------------------
 
-func TestUpsertPackageRuleKeyChangeDeletesOld(t *testing.T) {
+func TestUpsertPackageRuleUpsertsAndNeverDeletes(t *testing.T) {
 	fake := &fakeWorkshopClient{newID: 7}
 	r := &PackageRuleResource{client: fake}
 
-	state := PackageRuleResourceModel{
+	plan := PackageRuleResourceModel{
 		Tag:      types.StringValue("global"),
 		Source:   types.StringValue("PACKAGE_SOURCE_HOMEBREW"),
 		Name:     types.StringValue("wget"),
 		Policy:   types.StringValue("ALLOWLIST"),
 		RuleType: types.StringValue("BINARY"),
-		Id:       types.Int64Value(5),
 	}
-	plan := state
-	plan.Source = types.StringValue("PACKAGE_SOURCE_NPM") // key change
 
-	newID, diags := r.upsertPackageRule(context.Background(), plan, state)
+	newID, diags := r.upsertPackageRule(context.Background(), plan)
 	if diags.HasError() {
 		t.Fatalf("unexpected error diags: %v", diags)
 	}
 	if newID.ValueInt64() != 7 {
 		t.Errorf("expected new ID 7, got %d", newID.ValueInt64())
 	}
-	if fake.deletedID != 5 {
-		t.Errorf("key changed: expected delete of old ID 5, got %d", fake.deletedID)
-	}
-}
-
-func TestUpsertPackageRuleKeyUnchangedNoDelete(t *testing.T) {
-	fake := &fakeWorkshopClient{newID: 7}
-	r := &PackageRuleResource{client: fake}
-
-	state := PackageRuleResourceModel{
-		Tag:      types.StringValue("global"),
-		Source:   types.StringValue("PACKAGE_SOURCE_HOMEBREW"),
-		Name:     types.StringValue("wget"),
-		Policy:   types.StringValue("ALLOWLIST"),
-		RuleType: types.StringValue("BINARY"),
-		Id:       types.Int64Value(5),
-	}
-	plan := state
-	plan.Policy = types.StringValue("BLOCKLIST") // content-only change
-
-	_, diags := r.upsertPackageRule(context.Background(), plan, state)
-	if diags.HasError() {
-		t.Fatalf("unexpected error diags: %v", diags)
-	}
-	if fake.deletedID != 0 {
-		t.Errorf("key unchanged: old rule must not be deleted, deleted %d", fake.deletedID)
+	if fake.deleteCalls != 0 {
+		t.Errorf("Update must not delete; got %d delete calls", fake.deleteCalls)
 	}
 }
