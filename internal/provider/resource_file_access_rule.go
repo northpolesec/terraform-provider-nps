@@ -8,6 +8,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/list"
 	listschema "github.com/hashicorp/terraform-plugin-framework/list/schema"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -15,8 +16,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/identityschema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
@@ -87,6 +86,9 @@ type FileAccessRuleResourceModel struct {
 
 func (r *FileAccessRuleResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_workshop_file_access_rule"
+	// The rule ID (used as the identity) changes on every upsert, including
+	// in-place updates, so the identity is mutable across the resource's life.
+	resp.ResourceBehavior.MutableIdentity = true
 }
 
 func (r *FileAccessRuleResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
@@ -232,13 +234,13 @@ func (r *FileAccessRuleResource) Schema(ctx context.Context, req resource.Schema
 				},
 			},
 
-			// Computed value, returned from Create
+			// Computed value, returned from Create. The ID changes on every
+			// upsert (including in-place updates), so it is intentionally left
+			// without UseStateForUnknown: it plans as "known after apply"
+			// whenever the rule changes.
 			"id": schema.Int64Attribute{
 				Computed:            true,
 				MarkdownDescription: "The automatically generated ID of this file access rule",
-				PlanModifiers: []planmodifier.Int64{
-					int64planmodifier.RequiresReplace(),
-				},
 			},
 		},
 	}
@@ -271,54 +273,13 @@ func (r *FileAccessRuleResource) Create(ctx context.Context, req resource.Create
 		return
 	}
 
-	// Convert rule type string to enum
-	ruleType := apipb.FileAccessRuleType_FILE_ACCESS_RULE_TYPE_UNSPECIFIED
-	switch data.RuleType.ValueString() {
-	case "PathsWithAllowedProcesses":
-		ruleType = apipb.FileAccessRuleType_FILE_ACCESS_RULE_TYPE_PATHS_WITH_ALLOWED_PROCESSES
-	case "PathsWithDeniedProcesses":
-		ruleType = apipb.FileAccessRuleType_FILE_ACCESS_RULE_TYPE_PATHS_WITH_DENIED_PROCESSES
-	case "ProcessesWithAllowedPaths":
-		ruleType = apipb.FileAccessRuleType_FILE_ACCESS_RULE_TYPE_PROCESSES_WITH_ALLOWED_PATHS
-	case "ProcessesWithDeniedPaths":
-		ruleType = apipb.FileAccessRuleType_FILE_ACCESS_RULE_TYPE_PROCESSES_WITH_DENIED_PATHS
-	}
-
-	// Build the file access rule
-	builder := apipb.FileAccessRule_builder{
-		Tag:                 data.Tag.ValueString(),
-		Name:                data.Name.ValueString(),
-		AllowReadAccess:     data.AllowReadAccess.ValueBool(),
-		BlockViolations:     data.BlockViolations.ValueBool(),
-		RuleType:            ruleType,
-		EnableSilentMode:    data.EnableSilentMode.ValueBool(),
-		EnableSilentTtyMode: data.EnableSilentTtyMode.ValueBool(),
-		BlockMessage:        data.BlockMessage.ValueString(),
-		EventDetailUrl:      data.EventDetailUrl.ValueString(),
-		EventDetailText:     data.EventDetailText.ValueString(),
-	}
-
-	// Convert list attributes to string slices
-	convertListHelper := func(v types.List, target *[]string) {
-		if v.IsNull() || v.IsUnknown() {
-			return
-		}
-		resp.Diagnostics.Append(v.ElementsAs(ctx, target, false)...)
-	}
-	convertListHelper(data.PathLiterals, &builder.PathLiterals)
-	convertListHelper(data.PathPrefixes, &builder.PathPrefixes)
-	convertListHelper(data.ProcessBinaryPaths, &builder.ProcessBinaryPaths)
-	convertListHelper(data.ProcessCdHashes, &builder.ProcessCdHashes)
-	convertListHelper(data.ProcessSigningIds, &builder.ProcessSigningIds)
-	convertListHelper(data.ProcessCertificateSha256s, &builder.ProcessCertificateSha256S)
-	convertListHelper(data.ProcessTeamIds, &builder.ProcessTeamIds)
-
+	rule := buildFileAccessRule(ctx, data, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
 	crResp, err := r.client.CreateFileAccessRule(ctx, apipb.CreateFileAccessRuleRequest_builder{
-		Rule: builder.Build(),
+		Rule: rule,
 	}.Build())
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Failed to create file access rule: %v", err))
@@ -417,9 +378,106 @@ func (r *FileAccessRuleResource) Read(ctx context.Context, req resource.ReadRequ
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
+// buildFileAccessRule builds the (upsert) FileAccessRule from the model.
+func buildFileAccessRule(ctx context.Context, data FileAccessRuleResourceModel, diags *diag.Diagnostics) *apipb.FileAccessRule {
+	ruleType := apipb.FileAccessRuleType_FILE_ACCESS_RULE_TYPE_UNSPECIFIED
+	switch data.RuleType.ValueString() {
+	case "PathsWithAllowedProcesses":
+		ruleType = apipb.FileAccessRuleType_FILE_ACCESS_RULE_TYPE_PATHS_WITH_ALLOWED_PROCESSES
+	case "PathsWithDeniedProcesses":
+		ruleType = apipb.FileAccessRuleType_FILE_ACCESS_RULE_TYPE_PATHS_WITH_DENIED_PROCESSES
+	case "ProcessesWithAllowedPaths":
+		ruleType = apipb.FileAccessRuleType_FILE_ACCESS_RULE_TYPE_PROCESSES_WITH_ALLOWED_PATHS
+	case "ProcessesWithDeniedPaths":
+		ruleType = apipb.FileAccessRuleType_FILE_ACCESS_RULE_TYPE_PROCESSES_WITH_DENIED_PATHS
+	}
+
+	builder := apipb.FileAccessRule_builder{
+		Tag:                 data.Tag.ValueString(),
+		Name:                data.Name.ValueString(),
+		AllowReadAccess:     data.AllowReadAccess.ValueBool(),
+		BlockViolations:     data.BlockViolations.ValueBool(),
+		RuleType:            ruleType,
+		EnableSilentMode:    data.EnableSilentMode.ValueBool(),
+		EnableSilentTtyMode: data.EnableSilentTtyMode.ValueBool(),
+		BlockMessage:        data.BlockMessage.ValueString(),
+		EventDetailUrl:      data.EventDetailUrl.ValueString(),
+		EventDetailText:     data.EventDetailText.ValueString(),
+	}
+
+	convertListHelper := func(v types.List, target *[]string) {
+		if v.IsNull() || v.IsUnknown() {
+			return
+		}
+		diags.Append(v.ElementsAs(ctx, target, false)...)
+	}
+	convertListHelper(data.PathLiterals, &builder.PathLiterals)
+	convertListHelper(data.PathPrefixes, &builder.PathPrefixes)
+	convertListHelper(data.ProcessBinaryPaths, &builder.ProcessBinaryPaths)
+	convertListHelper(data.ProcessCdHashes, &builder.ProcessCdHashes)
+	convertListHelper(data.ProcessSigningIds, &builder.ProcessSigningIds)
+	convertListHelper(data.ProcessCertificateSha256s, &builder.ProcessCertificateSha256S)
+	convertListHelper(data.ProcessTeamIds, &builder.ProcessTeamIds)
+
+	return builder.Build()
+}
+
 func (r *FileAccessRuleResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	// File access rules don't support in-place updates. Users need to delete and recreate.
-	resp.Diagnostics.AddError("Client Error", "nps_workshop_file_access_rule does not support in-place updates")
+	var plan, state FileAccessRuleResourceModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	newID, diags := r.upsertFileAccessRule(ctx, plan, state)
+	resp.Diagnostics.Append(diags...)
+	if newID.IsNull() {
+		return
+	}
+	plan.Id = newID
+	tflog.Info(ctx, fmt.Sprintf("Updated file access rule: %d", plan.Id.ValueInt64()))
+
+	resp.Diagnostics.Append(resp.Identity.Set(ctx, FileAccessRuleIdentityModel{Id: plan.Id})...)
+	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+}
+
+// upsertFileAccessRule performs an atomic update via the CreateFileAccessRule
+// upsert RPC (keyed on (tag, name)) and returns the new rule ID. A matching
+// rule is atomically superseded, so a failed update leaves the old rule in
+// place. When the key changed, the upsert created a distinct new rule and left
+// the old one active, so we delete the old rule afterwards (a failed cleanup is
+// a warning, not an error). Returns a null ID (with diagnostics) on failure.
+func (r *FileAccessRuleResource) upsertFileAccessRule(ctx context.Context, plan, state FileAccessRuleResourceModel) (types.Int64, diag.Diagnostics) {
+	var diags diag.Diagnostics
+
+	rule := buildFileAccessRule(ctx, plan, &diags)
+	if diags.HasError() {
+		return types.Int64Null(), diags
+	}
+
+	crResp, err := r.client.CreateFileAccessRule(ctx, apipb.CreateFileAccessRuleRequest_builder{
+		Rule: rule,
+	}.Build())
+	if err != nil {
+		diags.AddError("Client Error", fmt.Sprintf("Failed to update file access rule: %v", err))
+		return types.Int64Null(), diags
+	}
+	newID := types.Int64Value(crResp.GetRuleId())
+
+	keyChanged := !plan.Tag.Equal(state.Tag) || !plan.Name.Equal(state.Name)
+	if keyChanged && !state.Id.IsNull() {
+		if _, err := r.client.DeleteFileAccessRule(ctx, apipb.DeleteFileAccessRuleRequest_builder{
+			RuleId: proto.Int64(state.Id.ValueInt64()),
+		}.Build()); err != nil {
+			diags.AddWarning(
+				"Failed to delete superseded file access rule",
+				fmt.Sprintf("The updated rule was created (ID %d), but deleting the old rule (ID %d) failed: %v. You may need to delete it manually.",
+					newID.ValueInt64(), state.Id.ValueInt64(), err),
+			)
+		}
+	}
+	return newID, diags
 }
 
 func (r *FileAccessRuleResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {

@@ -8,14 +8,13 @@ import (
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/list"
 	listschema "github.com/hashicorp/terraform-plugin-framework/list/schema"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/identityschema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
@@ -65,6 +64,9 @@ type PackageRuleResourceModel struct {
 
 func (r *PackageRuleResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_workshop_package_rule"
+	// The rule ID (used as the identity) changes on every upsert, including
+	// in-place updates, so the identity is mutable across the resource's life.
+	resp.ResourceBehavior.MutableIdentity = true
 }
 
 func (r *PackageRuleResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
@@ -123,13 +125,13 @@ func (r *PackageRuleResource) Schema(ctx context.Context, req resource.SchemaReq
 				Optional:            true,
 			},
 
-			// Computed value, returned from Create
+			// Computed value, returned from Create. The ID changes on every
+			// upsert (including in-place updates), so it is intentionally left
+			// without UseStateForUnknown: it plans as "known after apply"
+			// whenever the rule changes.
 			"id": schema.Int64Attribute{
 				Computed:            true,
 				MarkdownDescription: "The automatically generated ID of this package rule",
-				PlanModifiers: []planmodifier.Int64{
-					int64planmodifier.RequiresReplace(),
-				},
 			},
 		},
 	}
@@ -162,42 +164,13 @@ func (r *PackageRuleResource) Create(ctx context.Context, req resource.CreateReq
 		return
 	}
 
-	// Convert enum strings to enum values
-	source := apipb.PackageSource_value[data.Source.ValueString()]
-	policy := apipb.Policy_value[data.Policy.ValueString()]
-	ruleType := apipb.RuleType_value[data.RuleType.ValueString()]
-
-	// Build the package rule
-	builder := apipb.PackageRule_builder{
-		Tag:           data.Tag.ValueString(),
-		Source:        apipb.PackageSource(source),
-		Name:          data.Name.ValueString(),
-		Policy:        apipb.Policy(policy),
-		RuleType:      apipb.RuleType(ruleType),
-		VersionRegexp: data.VersionRegexp.ValueString(),
-	}
-
-	// Parse and set optional timestamp fields
-	if !data.MinDate.IsNull() && !data.MinDate.IsUnknown() {
-		t, err := time.Parse(time.RFC3339, data.MinDate.ValueString())
-		if err != nil {
-			resp.Diagnostics.AddError("Invalid min_date", fmt.Sprintf("Failed to parse min_date: %v", err))
-			return
-		}
-		builder.MinDate = timestamppb.New(t)
-	}
-
-	if !data.MaxDate.IsNull() && !data.MaxDate.IsUnknown() {
-		t, err := time.Parse(time.RFC3339, data.MaxDate.ValueString())
-		if err != nil {
-			resp.Diagnostics.AddError("Invalid max_date", fmt.Sprintf("Failed to parse max_date: %v", err))
-			return
-		}
-		builder.MaxDate = timestamppb.New(t)
+	rule := buildPackageRule(data, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
 	}
 
 	crResp, err := r.client.CreatePackageRule(ctx, apipb.CreatePackageRuleRequest_builder{
-		Rule: builder.Build(),
+		Rule: rule,
 	}.Build())
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Failed to create package rule: %v", err))
@@ -276,9 +249,100 @@ func (r *PackageRuleResource) Read(ctx context.Context, req resource.ReadRequest
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
+// buildPackageRule builds the (upsert) PackageRule from the model.
+func buildPackageRule(data PackageRuleResourceModel, diags *diag.Diagnostics) *apipb.PackageRule {
+	source := apipb.PackageSource_value[data.Source.ValueString()]
+	policy := apipb.Policy_value[data.Policy.ValueString()]
+	ruleType := apipb.RuleType_value[data.RuleType.ValueString()]
+
+	builder := apipb.PackageRule_builder{
+		Tag:           data.Tag.ValueString(),
+		Source:        apipb.PackageSource(source),
+		Name:          data.Name.ValueString(),
+		Policy:        apipb.Policy(policy),
+		RuleType:      apipb.RuleType(ruleType),
+		VersionRegexp: data.VersionRegexp.ValueString(),
+	}
+
+	if !data.MinDate.IsNull() && !data.MinDate.IsUnknown() {
+		t, err := time.Parse(time.RFC3339, data.MinDate.ValueString())
+		if err != nil {
+			diags.AddError("Invalid min_date", fmt.Sprintf("Failed to parse min_date: %v", err))
+		} else {
+			builder.MinDate = timestamppb.New(t)
+		}
+	}
+
+	if !data.MaxDate.IsNull() && !data.MaxDate.IsUnknown() {
+		t, err := time.Parse(time.RFC3339, data.MaxDate.ValueString())
+		if err != nil {
+			diags.AddError("Invalid max_date", fmt.Sprintf("Failed to parse max_date: %v", err))
+		} else {
+			builder.MaxDate = timestamppb.New(t)
+		}
+	}
+
+	return builder.Build()
+}
+
 func (r *PackageRuleResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	// Package rules don't support in-place updates. Users need to delete and recreate.
-	resp.Diagnostics.AddError("Client Error", "nps_workshop_package_rule does not support in-place updates")
+	var plan, state PackageRuleResourceModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	newID, diags := r.upsertPackageRule(ctx, plan, state)
+	resp.Diagnostics.Append(diags...)
+	if newID.IsNull() {
+		return
+	}
+	plan.Id = newID
+	tflog.Info(ctx, fmt.Sprintf("Updated package rule: %d", plan.Id.ValueInt64()))
+
+	resp.Diagnostics.Append(resp.Identity.Set(ctx, PackageRuleIdentityModel{Id: plan.Id})...)
+	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+}
+
+// upsertPackageRule performs an atomic update via the CreatePackageRule upsert
+// RPC (keyed on (tag, name, source)) and returns the new rule ID. A matching
+// rule is atomically superseded, so a failed update leaves the old rule in
+// place. When the key changed, the upsert created a distinct new rule and left
+// the old one active, so we delete the old rule afterwards (a failed cleanup is
+// a warning, not an error). Returns a null ID (with diagnostics) on failure.
+func (r *PackageRuleResource) upsertPackageRule(ctx context.Context, plan, state PackageRuleResourceModel) (types.Int64, diag.Diagnostics) {
+	var diags diag.Diagnostics
+
+	rule := buildPackageRule(plan, &diags)
+	if diags.HasError() {
+		return types.Int64Null(), diags
+	}
+
+	crResp, err := r.client.CreatePackageRule(ctx, apipb.CreatePackageRuleRequest_builder{
+		Rule: rule,
+	}.Build())
+	if err != nil {
+		diags.AddError("Client Error", fmt.Sprintf("Failed to update package rule: %v", err))
+		return types.Int64Null(), diags
+	}
+	newID := types.Int64Value(crResp.GetRuleId())
+
+	keyChanged := !plan.Tag.Equal(state.Tag) ||
+		!plan.Name.Equal(state.Name) ||
+		!plan.Source.Equal(state.Source)
+	if keyChanged && !state.Id.IsNull() {
+		if _, err := r.client.DeletePackageRule(ctx, apipb.DeletePackageRuleRequest_builder{
+			RuleId: proto.Int64(state.Id.ValueInt64()),
+		}.Build()); err != nil {
+			diags.AddWarning(
+				"Failed to delete superseded package rule",
+				fmt.Sprintf("The updated rule was created (ID %d), but deleting the old rule (ID %d) failed: %v. You may need to delete it manually.",
+					newID.ValueInt64(), state.Id.ValueInt64(), err),
+			)
+		}
+	}
+	return newID, diags
 }
 
 func (r *PackageRuleResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {

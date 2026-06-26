@@ -53,7 +53,7 @@ resource "nps_workshop_rule" "yes" {
 ### Optional
 
 - `affected_host_threshold` (Block, Optional) If set, the server will count how many hosts (matching the rule's tag) have run a binary covered by this rule's `identifier` and `rule_type` within the lookback window. If the count is greater than or equal to `host_count`, the rule is not created and a `FailedPrecondition` error is returned. The check applies the same identifier match used for resolution; for `CEL`/`SEATBELT` rules the count reflects the underlying identifier and may overstate the true impact. **Note:** this block is only supported in Workshop 2025.5 and later; in earlier versions it will be ignored by the server. (see [below for nested schema](#nestedblock--affected_host_threshold))
-- `block_reason` (String) The block reason for this rule. The possible values are: `POLICY`, and `MALICIOUS`.
+- `block_reason` (String) The block reason for this rule. The possible values are: `BLOCK_REASON_POLICY`, and `BLOCK_REASON_MALICIOUS`.
 - `cel_expr` (String) A CEL expression to evaluate when this rule matches. Only valid when the policy is set to `CEL`.
 - `comment` (String) A comment to add to this rule. Will be displayed in the Workshop UI.
 - `custom_msg` (String) A custom message to display to the user when this rule causes Santa to block the execution.
