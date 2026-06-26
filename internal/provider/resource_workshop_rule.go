@@ -20,6 +20,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/northpolesec/terraform-provider-nps/internal/utils"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 
 	svcpb "buf.build/gen/go/northpolesec/workshop-api/grpc/go/workshop/v1/workshopv1grpc"
@@ -31,6 +32,7 @@ var _ resource.Resource = &RuleResource{}
 var _ resource.ResourceWithConfigure = &RuleResource{}
 var _ resource.ResourceWithImportState = &RuleResource{}
 var _ resource.ResourceWithIdentity = &RuleResource{}
+var _ resource.ResourceWithModifyPlan = &RuleResource{}
 var _ list.ListResource = &RuleResource{}
 var _ list.ListResourceWithConfigure = &RuleResource{}
 
@@ -277,6 +279,52 @@ func (r *RuleResource) ConfigValidators(ctx context.Context) []resource.ConfigVa
 			}
 		}),
 	}
+}
+
+// ModifyPlan validates the CEL expression against the server during plan. This
+// can't live in ConfigValidators because those run during the validate walk,
+// before the provider (and thus the client) is configured. ModifyPlan runs at
+// plan time when the client is available.
+func (r *RuleResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	// No plan to validate on destroy, and the client may be unset if the
+	// provider isn't fully configured (e.g. during validate).
+	if req.Plan.Raw.IsNull() || r.client == nil {
+		return
+	}
+
+	var data RuleResourceModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	resp.Diagnostics.Append(r.validateCELExpr(ctx, data.Policy, data.CELExpr)...)
+}
+
+// validateCELExpr asks the server to validate the rule's CEL expression. It is a
+// no-op unless the policy is CEL and the expression is known and non-empty (an
+// expression interpolated from another resource may still be unknown at plan).
+func (r *RuleResource) validateCELExpr(ctx context.Context, policy, celExpr types.String) diag.Diagnostics {
+	var diags diag.Diagnostics
+	if policy.ValueString() != "CEL" || celExpr.IsUnknown() || celExpr.ValueString() == "" {
+		return diags
+	}
+
+	_, err := r.client.ValidateCELRule(ctx, apipb.ValidateCELRuleRequest_builder{
+		Expression: proto.String(celExpr.ValueString()),
+	}.Build())
+	if err != nil {
+		msg := err.Error()
+		if st, ok := status.FromError(err); ok {
+			msg = st.Message()
+		}
+		diags.AddAttributeError(
+			path.Root("cel_expr"),
+			"Invalid CEL expression",
+			fmt.Sprintf("The CEL expression failed validation: %s", msg),
+		)
+	}
+	return diags
 }
 
 func (r *RuleResource) Configure(ctx context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
