@@ -5,6 +5,14 @@ subcategory: ""
 description: |-
   The nps_workshop_file_access_rule resource manages File Access Rules.
   Management of file access rules requires the read:rules and write:rules permissions.
+  Updates to non-key fields are applied atomically in place. Changing the rule's natural key (name or tag) forces the rule to be replaced: by default Terraform destroys the old rule before creating the new one, leaving a brief window with no rule in place. To avoid that window, add a create_before_destroy lifecycle block:
+  
+  resource "nps_workshop_file_access_rule" "example" {
+    # ...
+    lifecycle {
+      create_before_destroy = true
+    }
+  }
 ---
 
 # nps_workshop_file_access_rule (Resource)
@@ -12,6 +20,17 @@ description: |-
 The `nps_workshop_file_access_rule` resource manages File Access Rules.
 
 Management of file access rules requires the `read:rules` and `write:rules` permissions.
+
+Updates to non-key fields are applied atomically in place. Changing the rule's natural key (`name` or `tag`) forces the rule to be replaced: by default Terraform destroys the old rule before creating the new one, leaving a brief window with no rule in place. To avoid that window, add a `create_before_destroy` lifecycle block:
+
+```hcl
+resource "nps_workshop_file_access_rule" "example" {
+  # ...
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+```
 
 ## Example Usage
 
@@ -62,7 +81,7 @@ resource "nps_workshop_file_access_rule" "ChromeCookies" {
 
 ### Read-Only
 
-- `id` (Number) The automatically generated ID of this file access rule
+- `id` (Number) The server-generated ID of this file access rule. This ID is reassigned on every upsert, including in-place updates, so it must not be relied on as a stable identifier across applies.
 
 ## Import
 
