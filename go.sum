@@ -2,8 +2,8 @@ buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go v1.36.11-202604152011
 buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go v1.36.11-20260415201107-50325440f8f2.1/go.mod h1:tvtbpgaVXZX4g6Pn+AnzFycuRK3MOz5HJfEGeEllXYM=
 buf.build/gen/go/northpolesec/protos/protocolbuffers/go v1.36.11-20260618192259-0c525ad667e7.1 h1:GBsvzxpZoZ9mHaGr7CTbqRKCExl/m0hijR2pU+v6SOk=
 buf.build/gen/go/northpolesec/protos/protocolbuffers/go v1.36.11-20260618192259-0c525ad667e7.1/go.mod h1:OfafKwDkrVDn7wb5tOCm86GmO5v23MErKzv+H9ZcOts=
-buf.build/gen/go/northpolesec/workshop-api/grpc/go v1.6.2-20260623213616-6a469b30a0a0.1 h1:949OS8iYl9UomoWwFJiChWGf/3v5T0Zi0NuT4NTjslw=
-buf.build/gen/go/northpolesec/workshop-api/grpc/go v1.6.2-20260623213616-6a469b30a0a0.1/go.mod h1:7+bZAGUHe2t4o50VN8KcG3Ap7qZnbEaWfJePIanLK0w=
+buf.build/gen/go/northpolesec/workshop-api/grpc/go v1.6.2-20260626013844-9055e8e897d2.1 h1:kGGQRTln5RKizdxZByiVtZLkDV5sY4Oq0CbO187FQdU=
+buf.build/gen/go/northpolesec/workshop-api/grpc/go v1.6.2-20260626013844-9055e8e897d2.1/go.mod h1:aDqvrpTEKIjaKE8+JSimYMLHruZ6epa2kQPtZ1ozyZQ=
 buf.build/gen/go/northpolesec/workshop-api/protocolbuffers/go v1.36.11-20260626013844-9055e8e897d2.1 h1:xgo25Wjiv3ugBijFORRW24r3tQ6ktwIxnrTkCUI2Bi4=
 buf.build/gen/go/northpolesec/workshop-api/protocolbuffers/go v1.36.11-20260626013844-9055e8e897d2.1/go.mod h1:lhnR8TnYKa2TD7VHYmU4OWZhE1fJ8LsVTTaci7PqbVQ=
 dario.cat/mergo v1.0.0 h1:AGCNq9Evsj31mOgNPcLyXc+4PNABt905YmuqPYYpBWk=
