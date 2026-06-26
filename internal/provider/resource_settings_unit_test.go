@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/durationpb"
 
 	apipb "buf.build/gen/go/northpolesec/workshop-api/protocolbuffers/go/workshop/v1"
@@ -129,8 +130,8 @@ func TestRiskEngineRoundtrip(t *testing.T) {
 		RemotePlugins: []*apipb.RemoteRiskEnginePluginSettings{
 			apipb.RemoteRiskEnginePluginSettings_builder{
 				Enabled: &en,
-				Name:    strPtr("plugin-a"),
-				Url:     strPtr("https://example.invalid/plugin"),
+				Name:    proto.String("plugin-a"),
+				Url:     proto.String("https://example.invalid/plugin"),
 				Ttl:     durationpb.New(2 * 1e9),
 				Headers: []*apipb.HTTPHeader{
 					apipb.HTTPHeader_builder{Key: "X-Tenant", Value: "north-pole"}.Build(),
@@ -180,5 +181,3 @@ func TestRiskEngineRoundtrip(t *testing.T) {
 		t.Errorf("unexpected headers after roundtrip: %v", rp[0].GetHeaders())
 	}
 }
-
-func strPtr(s string) *string { return &s }

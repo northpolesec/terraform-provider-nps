@@ -4,9 +4,11 @@ package provider
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/int32validator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/list"
 	listschema "github.com/hashicorp/terraform-plugin-framework/list/schema"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -68,20 +70,77 @@ type RuleAffectedHostThresholdModel struct {
 	Days      types.Int32 `tfsdk:"days"`
 }
 
+// blockReasonDefault resolves an unset block_reason the same way the server
+// does: blocklist-family policies default to BLOCK_REASON_POLICY, while other
+// policies (which the server forbids a block reason on) resolve to null. This
+// keeps an unset block_reason from showing a perpetual diff without copying the
+// value back from server state.
+type blockReasonDefault struct{}
+
+func (m blockReasonDefault) Description(context.Context) string {
+	return "Defaults block_reason to BLOCK_REASON_POLICY for blocklist policies when unset."
+}
+
+func (m blockReasonDefault) MarkdownDescription(ctx context.Context) string {
+	return m.Description(ctx)
+}
+
+func (m blockReasonDefault) PlanModifyString(ctx context.Context, req planmodifier.StringRequest, resp *planmodifier.StringResponse) {
+	// Respect an explicitly configured value.
+	if !req.ConfigValue.IsNull() {
+		return
+	}
+
+	var policy types.String
+	resp.Diagnostics.Append(req.Plan.GetAttribute(ctx, path.Root("policy"), &policy)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// The policy may reference an unknown value (e.g. another resource's
+	// computed attribute). We can't resolve the default until it is known, so
+	// leave block_reason unknown to be resolved on a later plan.
+	if policy.IsUnknown() {
+		resp.PlanValue = types.StringUnknown()
+		return
+	}
+
+	resp.PlanValue = resolveBlockReason(policy.ValueString())
+}
+
+// resolveBlockReason returns the block_reason for an unset config value given
+// the rule's policy: blocklist-family policies default to BLOCK_REASON_POLICY
+// (matching the server), everything else resolves to null.
+func resolveBlockReason(policy string) types.String {
+	if strings.Contains(policy, "BLOCKLIST") {
+		return types.StringValue("BLOCK_REASON_POLICY")
+	}
+	return types.StringNull()
+}
+
 func (r *RuleResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_workshop_rule"
+	// The rule ID (used as the identity) changes on every upsert, including
+	// in-place updates, so the identity is mutable across the resource's life.
+	resp.ResourceBehavior.MutableIdentity = true
 }
 
 func (r *RuleResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description:         "The nps_workshop_rule resource manages Rules. Management of rules requires the read:rules and write:rules permissions.",
-		MarkdownDescription: "The `nps_workshop_rule` resource manages Rules.\n\nManagement of rules requires the `read:rules` and `write:rules` permissions.",
+		Description:         "The nps_workshop_rule resource manages Rules. Management of rules requires the read:rules and write:rules permissions. Changing identifier, rule_type, or tag forces replacement; add a create_before_destroy lifecycle block to avoid a window where the rule does not exist.",
+		MarkdownDescription: "The `nps_workshop_rule` resource manages Rules.\n\nManagement of rules requires the `read:rules` and `write:rules` permissions.\n\nUpdates to non-key fields (such as `policy` or `comment`) are applied atomically in place. Changing the rule's natural key (`identifier`, `rule_type`, or `tag`) forces the rule to be replaced: by default Terraform destroys the old rule before creating the new one, leaving a brief window with no rule in place. To avoid that window, add a `create_before_destroy` lifecycle block:\n\n```hcl\nresource \"nps_workshop_rule\" \"example\" {\n  # ...\n  lifecycle {\n    create_before_destroy = true\n  }\n}\n```",
 
 		Attributes: map[string]schema.Attribute{
 			"identifier": schema.StringAttribute{
 				Description:         "The identifier for this rule. The format of this identifier depends on the rule type.",
 				MarkdownDescription: "The identifier for this rule. The format of this identifier depends on the rule type.",
 				Required:            true,
+				// Part of the natural key (identifier, rule_type, tag). The upsert
+				// only supersedes the old rule when the key matches, so changing the
+				// key must replace rather than update in place.
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
 			},
 			"rule_type": schema.StringAttribute{
 				Description:         "The type of this rule. The possible values are: BINARY, CERTIFICATE, TEAMID, SIGNINGID, and CDHASH.",
@@ -89,6 +148,10 @@ func (r *RuleResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 				Required:            true,
 				Validators: []validator.String{
 					stringvalidator.OneOf(utils.ProtoEnumToList(apipb.RuleType(0).Descriptor())...),
+				},
+				// Part of the natural key; see identifier.
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
 				},
 			},
 			"policy": schema.StringAttribute{
@@ -100,17 +163,31 @@ func (r *RuleResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 				},
 			},
 			"block_reason": schema.StringAttribute{
-				Description:         "The block reason for this rule. The possible values are: POLICY and MALICIOUS.",
-				MarkdownDescription: "The block reason for this rule. The possible values are: `POLICY`, and `MALICIOUS`.",
+				Description:         "The block reason for this rule. Valid values are BLOCK_REASON_POLICY and BLOCK_REASON_MALICIOUS. For blocklist-family policies an unset value defaults to BLOCK_REASON_POLICY; leave it unset for non-blocklist policies, which cannot have a block reason.",
+				MarkdownDescription: "The block reason for this rule. Valid values are `BLOCK_REASON_POLICY` and `BLOCK_REASON_MALICIOUS`. For blocklist-family policies an unset value defaults to `BLOCK_REASON_POLICY`; leave it unset for non-blocklist policies, which cannot have a block reason.",
 				Optional:            true,
+				// Computed + blockReasonDefault: for blocklist policies the server
+				// treats an unset block_reason as BLOCK_REASON_POLICY. We resolve
+				// that default ourselves at plan time so an unset value does not
+				// produce a perpetual diff against the server-assigned POLICY.
+				Computed: true,
 				Validators: []validator.String{
-					stringvalidator.OneOf(utils.ProtoEnumToList(apipb.Rule_BlockReason(0).Descriptor())...),
+					// Only the meaningful block reasons; BLOCK_REASON_UNSPECIFIED is
+					// reserved for the unset/default case handled by blockReasonDefault.
+					stringvalidator.OneOf("BLOCK_REASON_POLICY", "BLOCK_REASON_MALICIOUS"),
+				},
+				PlanModifiers: []planmodifier.String{
+					blockReasonDefault{},
 				},
 			},
 			"tag": schema.StringAttribute{
 				Description:         "The tag for this rule. The tag determines which hosts this rule will apply to. The tag must already exist in Workshop.",
 				MarkdownDescription: "The tag for this rule. The tag determines which hosts this rule will apply to. The tag must already exist in Workshop.",
 				Required:            true,
+				// Part of the natural key; see identifier.
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
 			},
 			"cel_expr": schema.StringAttribute{
 				Description:         "A CEL expression to evaluate when this rule matches. Only valid when the policy is set to CEL.",
@@ -131,13 +208,13 @@ func (r *RuleResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 				Optional:            true,
 			},
 
-			// Computed value, returned from Create
+			// Computed value, returned from Create. The ID changes on every
+			// upsert (including in-place updates), so it is intentionally left
+			// without UseStateForUnknown: it plans as "known after apply"
+			// whenever the rule changes.
 			"id": schema.StringAttribute{
 				Computed:            true,
-				MarkdownDescription: "The automatically generated ID of this rule",
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
-				},
+				MarkdownDescription: "The server-generated ID of this rule. This ID is reassigned on every upsert, including in-place updates, so it must not be relied on as a stable identifier across applies.",
 			},
 		},
 
@@ -230,35 +307,7 @@ func (r *RuleResource) Create(ctx context.Context, req resource.CreateRequest, r
 		return
 	}
 
-	ruleType := apipb.RuleType_value[data.RuleType.ValueString()]
-	rulePolicy := apipb.Policy_value[data.Policy.ValueString()]
-
-	rule := apipb.Rule_builder{
-		Identifier: data.Identifier.ValueString(),
-		RuleType:   apipb.RuleType(ruleType),
-		Policy:     apipb.Policy(rulePolicy),
-		Tag:        data.Tag.ValueString(),
-		Comment:    data.Comment.ValueString(),
-		CustomMsg:  data.CustomMsg.ValueString(),
-		CustomUrl:  data.CustomURL.ValueString(),
-		CelExpr:    data.CELExpr.ValueString(),
-	}.Build()
-
-	createReq := apipb.CreateRuleRequest_builder{
-		Rule: rule,
-	}
-	if data.AffectedHostThreshold != nil {
-		threshold := apipb.CreateRuleRequest_AffectedHostThreshold_builder{}
-		if !data.AffectedHostThreshold.HostCount.IsNull() && !data.AffectedHostThreshold.HostCount.IsUnknown() {
-			threshold.HostCount = proto.Int32(data.AffectedHostThreshold.HostCount.ValueInt32())
-		}
-		if !data.AffectedHostThreshold.Days.IsNull() && !data.AffectedHostThreshold.Days.IsUnknown() {
-			threshold.Days = proto.Int32(data.AffectedHostThreshold.Days.ValueInt32())
-		}
-		createReq.AffectedHostThreshold = threshold.Build()
-	}
-
-	crResp, err := r.client.CreateRule(ctx, createReq.Build())
+	crResp, err := r.client.CreateRule(ctx, buildCreateRuleRequest(data))
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Failed to create rule: %v", err))
 		return
@@ -271,6 +320,41 @@ func (r *RuleResource) Create(ctx context.Context, req resource.CreateRequest, r
 
 	// Save data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+}
+
+// buildCreateRuleRequest builds the (upsert) CreateRuleRequest from the model.
+func buildCreateRuleRequest(data RuleResourceModel) *apipb.CreateRuleRequest {
+	ruleType := apipb.RuleType_value[data.RuleType.ValueString()]
+	rulePolicy := apipb.Policy_value[data.Policy.ValueString()]
+
+	ruleBuilder := apipb.Rule_builder{
+		Identifier: data.Identifier.ValueString(),
+		RuleType:   apipb.RuleType(ruleType),
+		Policy:     apipb.Policy(rulePolicy),
+		Tag:        data.Tag.ValueString(),
+		Comment:    data.Comment.ValueString(),
+		CustomMsg:  data.CustomMsg.ValueString(),
+		CustomUrl:  data.CustomURL.ValueString(),
+		CelExpr:    data.CELExpr.ValueString(),
+	}
+	if br := data.BlockReason.ValueString(); br != "" {
+		ruleBuilder.BlockReason = apipb.Rule_BlockReason(apipb.Rule_BlockReason_value[br])
+	}
+
+	createReq := apipb.CreateRuleRequest_builder{
+		Rule: ruleBuilder.Build(),
+	}
+	if data.AffectedHostThreshold != nil {
+		threshold := apipb.CreateRuleRequest_AffectedHostThreshold_builder{}
+		if !data.AffectedHostThreshold.HostCount.IsNull() && !data.AffectedHostThreshold.HostCount.IsUnknown() {
+			threshold.HostCount = proto.Int32(data.AffectedHostThreshold.HostCount.ValueInt32())
+		}
+		if !data.AffectedHostThreshold.Days.IsNull() && !data.AffectedHostThreshold.Days.IsUnknown() {
+			threshold.Days = proto.Int32(data.AffectedHostThreshold.Days.ValueInt32())
+		}
+		createReq.AffectedHostThreshold = threshold.Build()
+	}
+	return createReq.Build()
 }
 
 func (r *RuleResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
@@ -338,9 +422,39 @@ func (r *RuleResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 }
 
 func (r *RuleResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	// Because an "upsert" of a rule results in a new rule ID, it's not possible
-	// for us to implement in-place updates.
-	resp.Diagnostics.AddError("Client Error", "nps_workshop_rule does not support in-place updates")
+	var plan RuleResourceModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	newID, diags := r.upsertRule(ctx, plan)
+	resp.Diagnostics.Append(diags...)
+	if newID.IsNull() {
+		return
+	}
+	plan.Id = newID
+
+	resp.Diagnostics.Append(resp.Identity.Set(ctx, RuleIdentityModel{Id: plan.Id})...)
+	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+}
+
+// upsertRule performs an atomic update via the CreateRule upsert RPC and
+// returns the new rule ID. CreateRule is an upsert: the server supersedes the
+// existing rule sharing this rule's (tag, rule_type, identifier) key and
+// returns a new ID, so the update is atomic and a failure leaves the old rule
+// in place. The key attributes are RequiresReplace, so Update only ever changes
+// non-key fields where the server is guaranteed to supersede; we never delete
+// the old rule ourselves. Returns a null ID (with diagnostics) on failure.
+func (r *RuleResource) upsertRule(ctx context.Context, plan RuleResourceModel) (types.String, diag.Diagnostics) {
+	var diags diag.Diagnostics
+
+	crResp, err := r.client.CreateRule(ctx, buildCreateRuleRequest(plan))
+	if err != nil {
+		diags.AddError("Client Error", fmt.Sprintf("Failed to update rule: %v", err))
+		return types.StringNull(), diags
+	}
+	return types.StringValue(crResp.GetRuleId()), diags
 }
 
 func (r *RuleResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
