@@ -131,6 +131,7 @@ func (p *NPSProvider) Resources(ctx context.Context) []func() resource.Resource 
 		NewPackageRuleResource,
 		NewRiskEngineSettingsResource,
 		NewRuleResource,
+		NewSignalResource,
 		NewSyncAuthSettingsResource,
 		NewSyncSettingsResource,
 		NewTagResource,
@@ -144,6 +145,7 @@ func (p *NPSProvider) ListResources(ctx context.Context) []func() list.ListResou
 		NewFileAccessRuleListResource,
 		NewPackageRuleListResource,
 		NewRuleListResource,
+		NewSignalListResource,
 		NewTagListResource,
 	}
 }
