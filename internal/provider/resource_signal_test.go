@@ -25,8 +25,8 @@ func TestAccSignal(t *testing.T) {
 					resource.TestCheckResourceAttr("nps_workshop_signal.test", "disabled", "false"),
 				),
 			},
-			// In-place (content-only) update: key is unchanged, so the upsert
-			// supersedes the existing signal without a destroy.
+			// In-place (non-key) update: name and tag are unchanged, so the upsert
+			// supersedes the existing signal without a replace.
 			{
 				Config: testAccSignalResourceConfig("CRED-001", "global", "SEVERITY_CRITICAL", true),
 				Check: resource.ComposeAggregateTestCheckFunc(
@@ -34,8 +34,9 @@ func TestAccSignal(t *testing.T) {
 					resource.TestCheckResourceAttr("nps_workshop_signal.test", "disabled", "true"),
 				),
 			},
-			// Key-changing update: renaming exercises the atomic upsert-then-delete
-			// path (new signal created, old one removed) without RequiresReplace.
+			// Key-changing update: name is RequiresReplace, so changing it forces
+			// the signal to be replaced (destroy + create) rather than updated in
+			// place.
 			{
 				Config: testAccSignalResourceConfig("CRED-002", "global", "SEVERITY_CRITICAL", true),
 				Check: resource.ComposeAggregateTestCheckFunc(

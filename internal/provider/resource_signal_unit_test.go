@@ -6,6 +6,8 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"google.golang.org/grpc"
 
@@ -71,16 +73,17 @@ func TestSignalSeverityRoundTrip(t *testing.T) {
 // fakeSignalClient embeds the full client interface (so it satisfies it) and
 // only overrides the signal upsert/delete RPCs the update path uses. Any other
 // call would panic on the nil embedded client, which is what we want for a
-// focused unit test.
+// focused unit test. DeleteSignal records a call so tests can assert Update
+// never deletes (the server supersedes the old signal; deletion only happens
+// via the resource's Delete, since the natural key is RequiresReplace).
 type fakeSignalClient struct {
 	svcpb.WorkshopServiceClient
 
 	upsertErr error
-	deleteErr error
 
-	upserted    bool
-	deletedName string // "" means no delete happened
-	deletedTag  string
+	upserted      bool
+	deleteCalls   int
+	lastUpsertReq *apipb.UpsertSignalRequest // captured for payload assertions
 }
 
 func (f *fakeSignalClient) UpsertSignal(ctx context.Context, in *apipb.UpsertSignalRequest, _ ...grpc.CallOption) (*apipb.UpsertSignalResponse, error) {
@@ -88,15 +91,12 @@ func (f *fakeSignalClient) UpsertSignal(ctx context.Context, in *apipb.UpsertSig
 		return nil, f.upsertErr
 	}
 	f.upserted = true
+	f.lastUpsertReq = in
 	return apipb.UpsertSignalResponse_builder{Signal: in.GetSignal()}.Build(), nil
 }
 
 func (f *fakeSignalClient) DeleteSignal(ctx context.Context, in *apipb.DeleteSignalRequest, _ ...grpc.CallOption) (*apipb.DeleteSignalResponse, error) {
-	if f.deleteErr != nil {
-		return nil, f.deleteErr
-	}
-	f.deletedName = in.GetName()
-	f.deletedTag = in.GetTag()
+	f.deleteCalls++
 	return apipb.DeleteSignalResponse_builder{}.Build(), nil
 }
 
@@ -110,90 +110,95 @@ func testSignalModel() SignalResourceModel {
 	}
 }
 
-func TestUpsertSignalKeyUnchangedNoDelete(t *testing.T) {
+// callSignalUpdate drives SignalResource.Update with a plan built from model,
+// wiring the Plan/State/Identity the framework would normally pre-populate so
+// the real Update flow (not just the shared upsert helper) is exercised.
+func callSignalUpdate(t *testing.T, r *SignalResource, model SignalResourceModel) *resource.UpdateResponse {
+	t.Helper()
+	ctx := context.Background()
+
+	var sResp resource.SchemaResponse
+	r.Schema(ctx, resource.SchemaRequest{}, &sResp)
+	var iResp resource.IdentitySchemaResponse
+	r.IdentitySchema(ctx, resource.IdentitySchemaRequest{}, &iResp)
+
+	req := resource.UpdateRequest{Plan: tfsdk.Plan{Schema: sResp.Schema}}
+	if diags := req.Plan.Set(ctx, model); diags.HasError() {
+		t.Fatalf("failed to build plan: %v", diags)
+	}
+	resp := &resource.UpdateResponse{
+		State:    tfsdk.State{Schema: sResp.Schema},
+		Identity: &tfsdk.ResourceIdentity{Schema: iResp.IdentitySchema},
+	}
+	r.Update(ctx, req, resp)
+	return resp
+}
+
+// TestSignalUpdateUpsertsAndNeverDeletes verifies an in-place update upserts and
+// never deletes: the natural key is RequiresReplace, so the server is
+// guaranteed to supersede the existing signal sharing the key.
+func TestSignalUpdateUpsertsAndNeverDeletes(t *testing.T) {
 	fake := &fakeSignalClient{}
 	r := &SignalResource{client: fake}
 
-	state := testSignalModel()
-	plan := state
-	plan.Severity = types.StringValue("SEVERITY_CRITICAL") // content-only change
+	plan := testSignalModel()
+	plan.Severity = types.StringValue("SEVERITY_CRITICAL") // non-key change
 
-	diags := r.upsertSignal(context.Background(), plan, state)
-	if diags.HasError() {
-		t.Fatalf("unexpected error diags: %v", diags)
+	resp := callSignalUpdate(t, r, plan)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected error diags: %v", resp.Diagnostics)
 	}
 	if !fake.upserted {
 		t.Error("expected UpsertSignal to be called")
 	}
-	if fake.deletedName != "" {
-		t.Errorf("key unchanged: old signal must NOT be deleted, deleted %q", fake.deletedName)
+	if fake.deleteCalls != 0 {
+		t.Errorf("Update must not delete; got %d delete calls", fake.deleteCalls)
 	}
 }
 
-func TestUpsertSignalKeyChangedDeletesOld(t *testing.T) {
-	fake := &fakeSignalClient{}
-	r := &SignalResource{client: fake}
-
-	state := testSignalModel()
-	plan := state
-	plan.Name = types.StringValue("CRED-002") // key change
-
-	diags := r.upsertSignal(context.Background(), plan, state)
-	if diags.HasError() {
-		t.Fatalf("unexpected error diags: %v", diags)
-	}
-	if fake.deletedName != "CRED-001" || fake.deletedTag != "global" {
-		t.Errorf("key changed: expected delete of old (CRED-001, global), got (%q, %q)", fake.deletedName, fake.deletedTag)
-	}
-}
-
-func TestUpsertSignalTagChangedDeletesOld(t *testing.T) {
-	fake := &fakeSignalClient{}
-	r := &SignalResource{client: fake}
-
-	state := testSignalModel()
-	plan := state
-	plan.Tag = types.StringValue("engineering") // key change via tag
-
-	diags := r.upsertSignal(context.Background(), plan, state)
-	if diags.HasError() {
-		t.Fatalf("unexpected error diags: %v", diags)
-	}
-	if fake.deletedName != "CRED-001" || fake.deletedTag != "global" {
-		t.Errorf("tag changed: expected delete of old (CRED-001, global), got (%q, %q)", fake.deletedName, fake.deletedTag)
-	}
-}
-
-func TestUpsertSignalUpsertErrorDoesNotDelete(t *testing.T) {
+func TestSignalUpdateErrorSurfacesDiagnostic(t *testing.T) {
 	fake := &fakeSignalClient{upsertErr: errors.New("boom")}
 	r := &SignalResource{client: fake}
 
-	state := testSignalModel()
-	plan := state
-	plan.Name = types.StringValue("CRED-002") // key change
-
-	diags := r.upsertSignal(context.Background(), plan, state)
-	if !diags.HasError() {
+	resp := callSignalUpdate(t, r, testSignalModel())
+	if !resp.Diagnostics.HasError() {
 		t.Error("expected an error diagnostic when the upsert fails")
 	}
-	if fake.deletedName != "" {
-		t.Error("upsert failed: the old signal must be left untouched")
+	if fake.deleteCalls != 0 {
+		t.Errorf("upsert failed: nothing should be deleted; got %d delete calls", fake.deleteCalls)
 	}
 }
 
-func TestUpsertSignalDeleteFailureIsWarningNotError(t *testing.T) {
-	fake := &fakeSignalClient{deleteErr: errors.New("nope")}
+// TestUpsertSignalPropagatesFields verifies the model fields are mapped onto the
+// upsert payload, including the severity enum string -> enum value conversion.
+func TestUpsertSignalPropagatesFields(t *testing.T) {
+	fake := &fakeSignalClient{}
 	r := &SignalResource{client: fake}
 
-	state := testSignalModel()
-	plan := state
-	plan.Name = types.StringValue("CRED-002") // key change triggers delete
-
-	diags := r.upsertSignal(context.Background(), plan, state)
-	if diags.HasError() {
-		t.Errorf("a failed cleanup should be a warning, not an error: %v", diags)
+	plan := SignalResourceModel{
+		Name:        types.StringValue("CRED-007"),
+		Tag:         types.StringValue("engineering"),
+		Description: types.StringValue("cookie theft"),
+		Severity:    types.StringValue("SEVERITY_CRITICAL"),
+		Expression:  types.StringValue("event.file.path == '/x'"),
+		Disabled:    types.BoolValue(true),
 	}
-	if diags.WarningsCount() != 1 {
-		t.Errorf("expected 1 warning, got %d", diags.WarningsCount())
+
+	if err := r.upsert(context.Background(), plan); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	got := fake.lastUpsertReq.GetSignal()
+	if got.GetName() != "CRED-007" || got.GetTag() != "engineering" {
+		t.Errorf("key: got (%q, %q)", got.GetName(), got.GetTag())
+	}
+	if got.GetSeverity() != commonpb.Severity_SEVERITY_CRITICAL {
+		t.Errorf("severity: got %v, want SEVERITY_CRITICAL", got.GetSeverity())
+	}
+	if got.GetDescription() != "cookie theft" || got.GetExpression() != "event.file.path == '/x'" {
+		t.Errorf("description/expression not propagated: %q / %q", got.GetDescription(), got.GetExpression())
+	}
+	if !got.GetDisabled() {
+		t.Error("disabled not propagated")
 	}
 }

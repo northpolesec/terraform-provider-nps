@@ -5,6 +5,14 @@ subcategory: ""
 description: |-
   The nps_workshop_signal resource manages signals. A signal is a CEL expression evaluated against events on hosts carrying a given tag; a match produces a signal report. The (name, tag) pair is the primary key.
   Management of signals requires the read:rules and write:rules permissions.
+  Updates to non-key fields are applied atomically in place. Changing the signal's natural key (name or tag) forces the signal to be replaced: by default Terraform destroys the old signal before creating the new one, leaving a brief window with no signal in place. To avoid that window, add a create_before_destroy lifecycle block:
+  
+  resource "nps_workshop_signal" "example" {
+    # ...
+    lifecycle {
+      create_before_destroy = true
+    }
+  }
 ---
 
 # nps_workshop_signal (Resource)
@@ -12,6 +20,17 @@ description: |-
 The `nps_workshop_signal` resource manages signals. A signal is a CEL expression evaluated against events on hosts carrying a given tag; a match produces a signal report. The `(name, tag)` pair is the primary key.
 
 Management of signals requires the `read:rules` and `write:rules` permissions.
+
+Updates to non-key fields are applied atomically in place. Changing the signal's natural key (`name` or `tag`) forces the signal to be replaced: by default Terraform destroys the old signal before creating the new one, leaving a brief window with no signal in place. To avoid that window, add a `create_before_destroy` lifecycle block:
+
+```hcl
+resource "nps_workshop_signal" "example" {
+  # ...
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+```
 
 ## Example Usage
 

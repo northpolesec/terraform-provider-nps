@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
-	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/list"
 	listschema "github.com/hashicorp/terraform-plugin-framework/list/schema"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -15,6 +14,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/identityschema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
@@ -67,27 +68,33 @@ type SignalResourceModel struct {
 
 func (r *SignalResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_workshop_signal"
-	// The identity is the (name, tag) primary key, which can change on an
-	// in-place update (the upsert moves the signal to the new key), so the
-	// identity is mutable across the resource's life.
-	resp.ResourceBehavior.MutableIdentity = true
 }
 
 func (r *SignalResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description:         "The nps_workshop_signal resource manages signals. A signal is a CEL expression evaluated against events on hosts carrying a given tag; a match produces a signal report. The (name, tag) pair is the primary key. Management of signals requires the read:rules and write:rules permissions.",
-		MarkdownDescription: "The `nps_workshop_signal` resource manages signals. A signal is a CEL expression evaluated against events on hosts carrying a given tag; a match produces a signal report. The `(name, tag)` pair is the primary key.\n\nManagement of signals requires the `read:rules` and `write:rules` permissions.",
+		Description:         "The nps_workshop_signal resource manages signals. A signal is a CEL expression evaluated against events on hosts carrying a given tag; a match produces a signal report. The (name, tag) pair is the primary key. Management of signals requires the read:rules and write:rules permissions. Changing name or tag forces replacement; add a create_before_destroy lifecycle block to avoid a window where the signal does not exist.",
+		MarkdownDescription: "The `nps_workshop_signal` resource manages signals. A signal is a CEL expression evaluated against events on hosts carrying a given tag; a match produces a signal report. The `(name, tag)` pair is the primary key.\n\nManagement of signals requires the `read:rules` and `write:rules` permissions.\n\nUpdates to non-key fields are applied atomically in place. Changing the signal's natural key (`name` or `tag`) forces the signal to be replaced: by default Terraform destroys the old signal before creating the new one, leaving a brief window with no signal in place. To avoid that window, add a `create_before_destroy` lifecycle block:\n\n```hcl\nresource \"nps_workshop_signal\" \"example\" {\n  # ...\n  lifecycle {\n    create_before_destroy = true\n  }\n}\n```",
 
 		Attributes: map[string]schema.Attribute{
 			"name": schema.StringAttribute{
 				Description:         "Stable identifier for the signal (e.g. \"CRED-001\"), echoed in reports. Unique per-tag.",
 				MarkdownDescription: "Stable identifier for the signal (e.g. `CRED-001`), echoed in reports. Unique per-tag.",
 				Required:            true,
+				// Part of the natural key (name, tag). The upsert only supersedes the
+				// old signal when the key matches, so changing the key must replace
+				// rather than update in place.
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
 			},
 			"tag": schema.StringAttribute{
 				Description:         "The tag this signal applies to. The tag determines which hosts this signal will apply to and must already exist in Workshop.",
 				MarkdownDescription: "The tag this signal applies to. The tag determines which hosts this signal will apply to and must already exist in Workshop.",
 				Required:            true,
+				// Part of the natural key; see name.
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
 			},
 			"description": schema.StringAttribute{
 				Description:         "A human-readable description of what this signal detects.",
@@ -238,53 +245,27 @@ func (r *SignalResource) Read(ctx context.Context, req resource.ReadRequest, res
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
+// Update applies a change via the UpsertSignal RPC. The natural key (name, tag)
+// is RequiresReplace, so Update only ever sees changes to non-key fields, where
+// the server atomically supersedes the existing definition sharing the key. A
+// failed upsert therefore leaves the old signal in place; we never delete it
+// ourselves (key changes are handled by Terraform as a replace).
 func (r *SignalResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var plan, state SignalResourceModel
+	var plan SignalResourceModel
 
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
-	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	resp.Diagnostics.Append(r.upsertSignal(ctx, plan, state)...)
-	if resp.Diagnostics.HasError() {
+	if err := r.upsert(ctx, plan); err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Failed to update signal: %v", err))
 		return
 	}
 	tflog.Info(ctx, fmt.Sprintf("Updated signal: %q (tag %q)", plan.Name.ValueString(), plan.Tag.ValueString()))
 
 	resp.Diagnostics.Append(resp.Identity.Set(ctx, SignalIdentityModel{Name: plan.Name, Tag: plan.Tag})...)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
-}
-
-// upsertSignal performs an atomic update via the UpsertSignal RPC (keyed on
-// (name, tag)). When the key is unchanged the server supersedes the existing
-// definition in place, so a failed upsert leaves the old signal untouched.
-// When the key changed, the upsert created a signal at the new key and left the
-// old one in place, so we delete the old signal afterwards. A failed cleanup is
-// a warning, not an error: the new signal is already in place.
-func (r *SignalResource) upsertSignal(ctx context.Context, plan, state SignalResourceModel) diag.Diagnostics {
-	var diags diag.Diagnostics
-
-	if err := r.upsert(ctx, plan); err != nil {
-		diags.AddError("Client Error", fmt.Sprintf("Failed to update signal: %v", err))
-		return diags
-	}
-
-	keyChanged := !plan.Name.Equal(state.Name) || !plan.Tag.Equal(state.Tag)
-	if keyChanged {
-		if _, err := r.client.DeleteSignal(ctx, apipb.DeleteSignalRequest_builder{
-			Name: proto.String(state.Name.ValueString()),
-			Tag:  proto.String(state.Tag.ValueString()),
-		}.Build()); err != nil {
-			diags.AddWarning(
-				"Failed to delete superseded signal",
-				fmt.Sprintf("The updated signal %q (tag %q) was created, but deleting the old signal %q (tag %q) failed: %v. You may need to delete it manually.",
-					plan.Name.ValueString(), plan.Tag.ValueString(), state.Name.ValueString(), state.Tag.ValueString(), err),
-			)
-		}
-	}
-	return diags
 }
 
 func (r *SignalResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
