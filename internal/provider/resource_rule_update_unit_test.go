@@ -4,10 +4,13 @@ package provider
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 
 	svcpb "buf.build/gen/go/northpolesec/workshop-api/grpc/go/workshop/v1/workshopv1grpc"
@@ -28,6 +31,19 @@ type fakeWorkshopClient struct {
 	created       bool
 	deleteCalls   int
 	lastCreateReq *apipb.CreateRuleRequest // captured for payload assertions
+
+	validateCELErr  error  // returned by ValidateCELRule
+	validateCELExpr string // captured expression
+	validateCELCall int    // number of ValidateCELRule calls
+}
+
+func (f *fakeWorkshopClient) ValidateCELRule(ctx context.Context, in *apipb.ValidateCELRuleRequest, _ ...grpc.CallOption) (*apipb.ValidateCELRuleResponse, error) {
+	f.validateCELCall++
+	f.validateCELExpr = in.GetExpression()
+	if f.validateCELErr != nil {
+		return nil, f.validateCELErr
+	}
+	return apipb.ValidateCELRuleResponse_builder{}.Build(), nil
 }
 
 func (f *fakeWorkshopClient) CreateRule(ctx context.Context, in *apipb.CreateRuleRequest, _ ...grpc.CallOption) (*apipb.CreateRuleResponse, error) {
@@ -187,6 +203,44 @@ func TestUpsertRuleCreateErrorReturnsNull(t *testing.T) {
 	}
 	if fake.deleteCalls != 0 {
 		t.Errorf("upsert failed: nothing should be deleted; got %d delete calls", fake.deleteCalls)
+	}
+}
+
+func TestValidateCELExpr(t *testing.T) {
+	cases := []struct {
+		name      string
+		policy    types.String
+		celExpr   types.String
+		validErr  error
+		wantCall  bool
+		wantError bool
+	}{
+		{"valid CEL", types.StringValue("CEL"), types.StringValue("true"), nil, true, false},
+		{"invalid CEL", types.StringValue("CEL"), types.StringValue("bad("), status.Error(codes.InvalidArgument, "syntax error"), true, true},
+		{"non-CEL policy skips", types.StringValue("BLOCKLIST"), types.StringValue("true"), nil, false, false},
+		{"empty expr skips", types.StringValue("CEL"), types.StringValue(""), nil, false, false},
+		{"unknown expr skips", types.StringValue("CEL"), types.StringUnknown(), nil, false, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			fake := &fakeWorkshopClient{validateCELErr: c.validErr}
+			r := &RuleResource{client: fake}
+
+			diags := r.validateCELExpr(context.Background(), c.policy, c.celExpr)
+			if diags.HasError() != c.wantError {
+				t.Errorf("HasError() = %v, want %v (%v)", diags.HasError(), c.wantError, diags)
+			}
+			// On error, only the status desc ("syntax error") should surface,
+			// not the full gRPC error string ("rpc error: code = ...").
+			if c.wantError && diags.HasError() {
+				if detail := diags.Errors()[0].Detail(); !strings.HasSuffix(detail, "syntax error") {
+					t.Errorf("detail = %q, want it to end with the bare desc", detail)
+				}
+			}
+			if (fake.validateCELCall > 0) != c.wantCall {
+				t.Errorf("ValidateCELRule called %d times, wantCall=%v", fake.validateCELCall, c.wantCall)
+			}
+		})
 	}
 }
 
