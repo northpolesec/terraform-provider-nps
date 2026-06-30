@@ -1,0 +1,1 @@
+terraform import nps_workshop_network_flow_rule.example 12345
