@@ -128,6 +128,7 @@ func (p *NPSProvider) Resources(ctx context.Context) []func() resource.Resource 
 		NewFileAccessRuleResource,
 		NewMCPServerSettingsResource,
 		NewMPASettingsResource,
+		NewNetworkFlowRuleResource,
 		NewPackageRuleResource,
 		NewRiskEngineSettingsResource,
 		NewRuleResource,
@@ -143,6 +144,7 @@ func (p *NPSProvider) ListResources(ctx context.Context) []func() list.ListResou
 	return []func() list.ListResource{
 		NewAPIKeyListResource,
 		NewFileAccessRuleListResource,
+		NewNetworkFlowRuleListResource,
 		NewPackageRuleListResource,
 		NewRuleListResource,
 		NewSignalListResource,
