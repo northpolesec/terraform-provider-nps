@@ -6,6 +6,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -107,6 +108,7 @@ func testSignalModel() SignalResourceModel {
 		Severity:   types.StringValue("SEVERITY_HIGH"),
 		Expression: types.StringValue("true"),
 		Disabled:   types.BoolValue(false),
+		Labels:     types.SetNull(types.StringType),
 	}
 }
 
@@ -182,6 +184,7 @@ func TestUpsertSignalPropagatesFields(t *testing.T) {
 		Severity:    types.StringValue("SEVERITY_CRITICAL"),
 		Expression:  types.StringValue("event.file.path == '/x'"),
 		Disabled:    types.BoolValue(true),
+		Labels:      types.SetValueMust(types.StringType, []attr.Value{types.StringValue("cred"), types.StringValue("theft")}),
 	}
 
 	if err := r.upsert(context.Background(), plan); err != nil {
@@ -200,5 +203,8 @@ func TestUpsertSignalPropagatesFields(t *testing.T) {
 	}
 	if !got.GetDisabled() {
 		t.Error("disabled not propagated")
+	}
+	if gotLabels := got.GetLabels(); len(gotLabels) != 2 {
+		t.Errorf("labels not propagated: got %v", gotLabels)
 	}
 }

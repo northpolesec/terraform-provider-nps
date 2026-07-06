@@ -5,4 +5,5 @@ resource "nps_workshop_signal" "ChromeCookieAccess" {
   description = "Access to the Chrome cookie store"
   severity    = "SEVERITY_HIGH"
   expression  = "event.file.path.endsWith('/Cookies')"
+  labels      = ["credentials", "chrome"]
 }
