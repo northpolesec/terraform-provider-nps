@@ -64,6 +64,7 @@ type SignalResourceModel struct {
 	Severity    types.String `tfsdk:"severity"`
 	Expression  types.String `tfsdk:"expression"`
 	Disabled    types.Bool   `tfsdk:"disabled"`
+	Labels      types.Set    `tfsdk:"labels"`
 }
 
 func (r *SignalResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -120,6 +121,12 @@ func (r *SignalResource) Schema(ctx context.Context, req resource.SchemaRequest,
 				Optional:            true,
 				Computed:            true,
 				Default:             booldefault.StaticBool(false),
+			},
+			"labels": schema.SetAttribute{
+				Description:         "Free-form labels attached to the signal and copied onto each report it produces. Each label must be non-whitespace and at most 64 characters.",
+				MarkdownDescription: "Free-form labels attached to the signal and copied onto each report it produces. Each label must be non-whitespace and at most 64 characters.",
+				Optional:            true,
+				ElementType:         types.StringType,
 			},
 		},
 	}
@@ -178,6 +185,11 @@ func (r *SignalResource) ValidateConfig(ctx context.Context, req resource.Valida
 // by Create and Update, since the backend keys on (name, tag) and treats both
 // the same way.
 func (r *SignalResource) upsert(ctx context.Context, data SignalResourceModel) error {
+	var labels []string
+	if !data.Labels.IsNull() && !data.Labels.IsUnknown() {
+		data.Labels.ElementsAs(ctx, &labels, false)
+	}
+
 	_, err := r.client.UpsertSignal(ctx, apipb.UpsertSignalRequest_builder{
 		Signal: apipb.Signal_builder{
 			Name:        data.Name.ValueString(),
@@ -186,6 +198,7 @@ func (r *SignalResource) upsert(ctx context.Context, data SignalResourceModel) e
 			Severity:    commonpb.Severity(commonpb.Severity_value[data.Severity.ValueString()]),
 			Expression:  data.Expression.ValueString(),
 			Disabled:    data.Disabled.ValueBool(),
+			Labels:      labels,
 		}.Build(),
 	}.Build())
 	return err
@@ -237,6 +250,7 @@ func (r *SignalResource) Read(ctx context.Context, req resource.ReadRequest, res
 	data.Severity = types.StringValue(signal.GetSeverity().String())
 	data.Expression = types.StringValue(signal.GetExpression())
 	data.Disabled = types.BoolValue(signal.GetDisabled())
+	data.Labels = stringSetOrNull(ctx, signal.GetLabels(), &resp.Diagnostics)
 	if signal.GetDescription() != "" {
 		data.Description = types.StringValue(signal.GetDescription())
 	}
@@ -359,6 +373,7 @@ func (r *SignalResource) List(ctx context.Context, req list.ListRequest, stream 
 					Severity:   types.StringValue(signal.GetSeverity().String()),
 					Expression: types.StringValue(signal.GetExpression()),
 					Disabled:   types.BoolValue(signal.GetDisabled()),
+					Labels:     stringSetOrNull(ctx, signal.GetLabels(), &result.Diagnostics),
 				}
 				if signal.GetDescription() != "" {
 					model.Description = types.StringValue(signal.GetDescription())

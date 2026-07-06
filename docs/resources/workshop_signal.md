@@ -42,6 +42,7 @@ resource "nps_workshop_signal" "ChromeCookieAccess" {
   description = "Access to the Chrome cookie store"
   severity    = "SEVERITY_HIGH"
   expression  = "event.file.path.endsWith('/Cookies')"
+  labels      = ["credentials", "chrome"]
 }
 ```
 
@@ -59,3 +60,4 @@ resource "nps_workshop_signal" "ChromeCookieAccess" {
 
 - `description` (String) A human-readable description of what this signal detects.
 - `disabled` (Boolean) When true the signal is suppressed for hosts where this definition wins precedence (a higher-priority tag can disable a signal a lower tag enables).
+- `labels` (Set of String) Free-form labels attached to the signal and copied onto each report it produces. Each label must be non-whitespace and at most 64 characters.
