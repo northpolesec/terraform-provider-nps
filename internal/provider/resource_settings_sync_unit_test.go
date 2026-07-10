@@ -3,14 +3,64 @@ package provider
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"google.golang.org/protobuf/proto"
 
 	apipb "buf.build/gen/go/northpolesec/workshop-api/protocolbuffers/go/workshop/v1"
 )
+
+// TestSyncSettingsCelFallbackValidation verifies that CEL fallback expressions
+// are validated before the destructive delete/update, so an invalid expression
+// leaves the tag's existing settings untouched.
+func TestSyncSettingsCelFallbackValidation(t *testing.T) {
+	ctx := context.Background()
+
+	for _, c := range []struct {
+		name          string
+		expr          string
+		validateErr   error
+		wantErr       bool
+		wantValidated int
+		wantMutated   bool
+	}{
+		{name: "valid", expr: "true", wantValidated: 1, wantMutated: true},
+		{name: "invalid", expr: "bogus(", validateErr: errors.New("syntax error"), wantErr: true, wantValidated: 1, wantMutated: false},
+		{name: "empty expr skips validation", expr: "", wantValidated: 0, wantMutated: true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			fake := &fakeWorkshopClient{validateCELErr: c.validateErr}
+			r := &SyncSettingsResource{client: fake}
+			data := &SyncSettingsResourceModel{
+				Tag:              types.StringValue("dev"),
+				TelemetryEnabled: types.BoolNull(),
+				CelFallbackRule: []SyncSettingsCelFallbackRuleModel{
+					{Expression: types.StringValue(c.expr)},
+				},
+			}
+
+			var diags diag.Diagnostics
+			ok := r.replaceTagSettings(ctx, data, types.BoolNull(), &diags)
+
+			if diags.HasError() != c.wantErr {
+				t.Errorf("HasError=%v, want %v (diags: %v)", diags.HasError(), c.wantErr, diags)
+			}
+			if ok == c.wantErr {
+				t.Errorf("replaceTagSettings returned %v, want %v", ok, !c.wantErr)
+			}
+			if fake.validateCELCall != c.wantValidated {
+				t.Errorf("ValidateCELRule called %d times, want %d", fake.validateCELCall, c.wantValidated)
+			}
+			if mutated := fake.syncDeleteCalls > 0 || fake.syncUpdateCalls > 0; mutated != c.wantMutated {
+				t.Errorf("mutated=%v (delete=%d update=%d), want %v", mutated, fake.syncDeleteCalls, fake.syncUpdateCalls, c.wantMutated)
+			}
+		})
+	}
+}
 
 // TestSyncSettingsUnsetVsEmpty verifies the central requirement: an unset
 // Terraform attribute produces an absent proto field, while an attribute set
