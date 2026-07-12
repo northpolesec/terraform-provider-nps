@@ -17,6 +17,13 @@ resource "nps_workshop_sync_settings" "dev_settings" {
     custom_msg = "No hypervisors!"
   }
 
+  on_demand_admin_mode {
+    state                    = "ON_DEMAND_ADMIN_MODE_STATE_ENABLED"
+    max_minutes              = 120
+    default_duration_minutes = 15
+    require_justification    = true
+  }
+
   push_sync_interval = 300
 
   telemetry_enabled = true
