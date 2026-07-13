@@ -360,7 +360,7 @@ func (r *PackageRuleResource) Delete(ctx context.Context, req resource.DeleteReq
 	_, err := r.client.DeletePackageRule(ctx, apipb.DeletePackageRuleRequest_builder{
 		RuleId: proto.Int64(ruleId),
 	}.Build())
-	if err != nil {
+	if err != nil && !isRuleDeleteNoOp(err) {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Failed to delete package rule: %v", err))
 		return
 	}

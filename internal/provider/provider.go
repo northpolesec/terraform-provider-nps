@@ -67,7 +67,7 @@ func (p *NPSProvider) Schema(ctx context.Context, req provider.SchemaRequest, re
 	resp.Schema = schema.Schema{
 		Attributes: map[string]schema.Attribute{
 			"endpoint": schema.StringAttribute{
-				MarkdownDescription: "The base URL for the Workshop instance. Can also be supplied using the `WORKSHOP_ENDPOINT` envrionment variable.",
+				MarkdownDescription: "The base URL for the Workshop instance. Can also be supplied using the `WORKSHOP_ENDPOINT` environment variable. `NPS_ENDPOINT` remains available as a deprecated fallback.",
 				Optional:            true,
 			},
 			"api_key": schema.StringAttribute{
@@ -86,6 +86,22 @@ func (p *NPSProvider) Schema(ctx context.Context, req provider.SchemaRequest, re
 	}
 }
 
+// resolveEndpoint applies the provider's endpoint precedence. Explicit
+// configuration wins over environment variables, and WORKSHOP_ENDPOINT wins
+// over the deprecated NPS_ENDPOINT alias.
+func resolveEndpoint(configured string) (endpoint string, usedDeprecatedEnv bool) {
+	if configured != "" {
+		return configured, false
+	}
+	if endpoint := os.Getenv("WORKSHOP_ENDPOINT"); endpoint != "" {
+		return endpoint, false
+	}
+	if endpoint := os.Getenv("NPS_ENDPOINT"); endpoint != "" {
+		return endpoint, true
+	}
+	return "", false
+}
+
 func (p *NPSProvider) Configure(ctx context.Context, req provider.ConfigureRequest, resp *provider.ConfigureResponse) {
 	var data NPSProviderModel
 
@@ -94,14 +110,17 @@ func (p *NPSProvider) Configure(ctx context.Context, req provider.ConfigureReque
 		return
 	}
 
-	// Validate endpoint
-	endpoint := data.Endpoint.ValueString()
-	if e := os.Getenv("NPS_ENDPOINT"); e != "" {
-		endpoint = e
-	}
+	// Validate endpoint.
+	endpoint, usedDeprecatedEndpointEnv := resolveEndpoint(data.Endpoint.ValueString())
 	if endpoint == "" {
-		resp.Diagnostics.AddError("NPS Provider configuration error", "endpoing (or NPS_ENDPOINT environment variable) must be set")
+		resp.Diagnostics.AddError("NPS Provider configuration error", "endpoint (or WORKSHOP_ENDPOINT environment variable) must be set")
 		return
+	}
+	if usedDeprecatedEndpointEnv {
+		resp.Diagnostics.AddWarning(
+			"NPS_ENDPOINT is deprecated",
+			"Set WORKSHOP_ENDPOINT instead. NPS_ENDPOINT remains a fallback for compatibility.",
+		)
 	}
 
 	// Get the necessary auth call option.
@@ -115,7 +134,7 @@ func (p *NPSProvider) Configure(ctx context.Context, req provider.ConfigureReque
 
 	// If the endpoint is localhost, allow an insecure connection.
 	// Otherwise ensure TLS is used.
-	if data.Endpoint.ValueString() == "localhost:8080" {
+	if endpoint == "localhost:8080" {
 		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	} else {
 		opts = append(opts, grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{})))
