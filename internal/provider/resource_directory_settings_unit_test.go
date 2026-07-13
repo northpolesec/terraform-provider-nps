@@ -195,3 +195,26 @@ func TestGroupsProtoToModel_WithGroups(t *testing.T) {
 		t.Errorf("unexpected tags after roundtrip: %v", groups[1].GetTags())
 	}
 }
+
+func TestGroupsProtoToModel_EmptyGroupTagsAreKnownEmpty(t *testing.T) {
+	ctx := context.Background()
+	var diags diag.Diagnostics
+
+	filter := apipb.DirectorySyncGroupFilter_builder{
+		Groups: []*apipb.DirectorySyncGroupFilter_Group{
+			apipb.DirectorySyncGroupFilter_Group_builder{Id: "g1"}.Build(),
+		},
+	}.Build()
+
+	result := groupsProtoToModel(ctx, filter, &diags)
+	if diags.HasError() {
+		t.Fatalf("unexpected diagnostics: %v", diags)
+	}
+	roundtripped := groupsModelToProto(ctx, result, &diags)
+	if diags.HasError() {
+		t.Fatalf("unexpected diagnostics on roundtrip: %v", diags)
+	}
+	if got := roundtripped.GetGroups()[0].GetTags(); got == nil || len(got) != 0 {
+		t.Fatalf("empty tags = %#v, want a known empty slice", got)
+	}
+}

@@ -66,6 +66,14 @@ type RuleResourceModel struct {
 	Id types.String `tfsdk:"id"`
 }
 
+func clearRuleOptionalState(data *RuleResourceModel) {
+	data.BlockReason = normalizeAbsentOptionalString(data.BlockReason)
+	data.Comment = normalizeAbsentOptionalString(data.Comment)
+	data.CustomMsg = normalizeAbsentOptionalString(data.CustomMsg)
+	data.CustomURL = normalizeAbsentOptionalString(data.CustomURL)
+	data.CELExpr = normalizeAbsentOptionalString(data.CELExpr)
+}
+
 // RuleAffectedHostThresholdModel describes the affected_host_threshold block.
 type RuleAffectedHostThresholdModel struct {
 	HostCount types.Int32 `tfsdk:"host_count"`
@@ -440,6 +448,7 @@ func (r *RuleResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 	// Now that we've found the rule, overwrite the state data with the actual
 	// values retrieved via the API.
 	rule := ret.GetRules()[0]
+	clearRuleOptionalState(&data)
 	data.Id = types.StringValue(rule.GetRuleId())
 	data.Identifier = types.StringValue(rule.GetIdentifier())
 	data.RuleType = types.StringValue(rule.GetRuleType().String())

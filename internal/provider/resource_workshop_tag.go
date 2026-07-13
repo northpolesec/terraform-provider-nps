@@ -336,14 +336,25 @@ func (r *TagResource) Read(ctx context.Context, req resource.ReadRequest, resp *
 		}
 	}
 
-	data.GroupNames = stringSetOrNull(ctx, names, &resp.Diagnostics)
-	data.GroupIdpIds = stringSetOrNull(ctx, idpIDs, &resp.Diagnostics)
+	setTagGroupReferenceState(ctx, &data, names, idpIDs, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
 	resp.Diagnostics.Append(resp.Identity.Set(ctx, TagIdentityModel{Name: data.Name})...)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+}
+
+func setTagGroupReferenceState(ctx context.Context, data *TagResourceModel, names, idpIDs []string, diags *diag.Diagnostics) {
+	data.GroupNames = stringSetOrPriorEmpty(ctx, names, data.GroupNames, diags)
+	data.GroupIdpIds = stringSetOrPriorEmpty(ctx, idpIDs, data.GroupIdpIds, diags)
+}
+
+func stringSetOrPriorEmpty(ctx context.Context, values []string, prior types.Set, diags *diag.Diagnostics) types.Set {
+	if len(values) == 0 {
+		return normalizeAbsentOptionalSet(prior, types.StringType)
+	}
+	return stringSetOrNull(ctx, values, diags)
 }
 
 // stringSetOrNull builds a set from values, returning a null set (rather than

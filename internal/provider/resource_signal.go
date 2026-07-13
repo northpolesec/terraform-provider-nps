@@ -67,6 +67,11 @@ type SignalResourceModel struct {
 	Labels      types.Set    `tfsdk:"labels"`
 }
 
+func clearSignalOptionalState(data *SignalResourceModel) {
+	data.Description = normalizeAbsentOptionalString(data.Description)
+	data.Labels = normalizeAbsentOptionalSet(data.Labels, types.StringType)
+}
+
 func (r *SignalResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_workshop_signal"
 }
@@ -245,12 +250,15 @@ func (r *SignalResource) Read(ctx context.Context, req resource.ReadRequest, res
 	}
 
 	signal := ret.GetSignals()[0]
+	clearSignalOptionalState(&data)
 	data.Name = types.StringValue(signal.GetName())
 	data.Tag = types.StringValue(signal.GetTag())
 	data.Severity = types.StringValue(signal.GetSeverity().String())
 	data.Expression = types.StringValue(signal.GetExpression())
 	data.Disabled = types.BoolValue(signal.GetDisabled())
-	data.Labels = stringSetOrNull(ctx, signal.GetLabels(), &resp.Diagnostics)
+	if len(signal.GetLabels()) > 0 {
+		data.Labels = stringSetOrNull(ctx, signal.GetLabels(), &resp.Diagnostics)
+	}
 	if signal.GetDescription() != "" {
 		data.Description = types.StringValue(signal.GetDescription())
 	}
