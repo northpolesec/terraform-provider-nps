@@ -515,9 +515,23 @@ func priorList(obj types.Object, key string) types.List {
 	return types.ListNull(types.StringType)
 }
 
+// priorHeaders pulls the headers list from a prior-state source object so Read
+// preserves the user's null-vs-empty choice when the server returns none.
+func priorHeaders(obj types.Object) types.List {
+	if obj.IsNull() || obj.IsUnknown() {
+		return types.ListNull(webhookHeaderAttrTypesObject())
+	}
+	if l, ok := obj.Attributes()["headers"].(types.List); ok {
+		return l
+	}
+	return types.ListNull(webhookHeaderAttrTypesObject())
+}
+
 func webhookBasicValues(ctx context.Context, b *apipb.WebhookBasicConfig, prior types.Object) (map[string]attr.Value, diag.Diagnostics) {
 	var diags diag.Diagnostics
-	headers := types.ListNull(webhookHeaderAttrTypesObject())
+	// Preserve the prior null-vs-empty choice when the server returns no headers,
+	// mirroring how enumsToTF preserves the event/state filters.
+	headers := priorHeaders(prior)
 	if b != nil && len(b.GetHeaders()) > 0 {
 		hms := make([]webhookHeaderModel, len(b.GetHeaders()))
 		for i, h := range b.GetHeaders() {

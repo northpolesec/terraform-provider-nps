@@ -122,3 +122,11 @@ Required:
 
 - `key` (String)
 - `value` (String, Sensitive)
+
+## Import
+
+Import is supported using the following syntax:
+
+```shell
+terraform import nps_workshop_settings_webhooks.example webhook_settings
+```
