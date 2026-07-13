@@ -3,12 +3,12 @@
 page_title: "nps_workshop_directory_settings Resource - nps"
 subcategory: ""
 description: |-
-  The nps_workshop_directory_settings resource manages directory settings for Workshop. This is a singleton resource — one per tenant.
+  The nps_workshop_directory_settings resource manages directory settings for Workshop. This is a singleton resource — one per tenant. Destroy removes it from Terraform state without changing Workshop.
 ---
 
 # nps_workshop_directory_settings (Resource)
 
-The `nps_workshop_directory_settings` resource manages directory settings for Workshop. This is a singleton resource — one per tenant.
+The `nps_workshop_directory_settings` resource manages directory settings for Workshop. This is a singleton resource — one per tenant. Destroy removes it from Terraform state without changing Workshop.
 
 ## Example Usage
 
