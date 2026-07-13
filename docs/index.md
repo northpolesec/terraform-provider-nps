@@ -52,5 +52,4 @@ provider "nps" {
 ### Optional
 
 - `api_key` (String, Sensitive) The API key to use. Can also be supplied using the `WORKSHOP_API_KEY` environment variable. If no API key is provided, the provider will attempt to use a stored short-lived user token.
-- `endpoint` (String) The base URL for the Workshop instance. Can also be supplied using the `WORKSHOP_ENDPOINT` envrionment variable.
-
+- `endpoint` (String) The base URL for the Workshop instance. Can also be supplied using the `WORKSHOP_ENDPOINT` environment variable. `NPS_ENDPOINT` remains available as a deprecated fallback.
