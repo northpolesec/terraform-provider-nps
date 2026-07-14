@@ -465,7 +465,7 @@ func (r *TagResource) Delete(ctx context.Context, req resource.DeleteRequest, re
 	_, err := r.client.DeleteTag(ctx, apipb.DeleteTagRequest_builder{
 		Tag: proto.String(tag),
 	}.Build())
-	if err != nil {
+	if err != nil && !isDeleteNoOp(err) {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Failed to delete tag: %v", err))
 		return
 	}

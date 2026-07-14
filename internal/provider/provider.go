@@ -9,11 +9,13 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/list"
 	"github.com/hashicorp/terraform-plugin-framework/provider"
 	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/northpolesec/terraform-provider-nps/internal/auth"
 	"google.golang.org/grpc"
@@ -37,12 +39,23 @@ type NPSProvider struct {
 
 // NPSProviderModel describes the provider data model.
 type NPSProviderModel struct {
-	Endpoint types.String `tfsdk:"endpoint"`
-	APIKey   types.String `tfsdk:"api_key"`
+	Endpoint        types.String `tfsdk:"endpoint"`
+	APIKey          types.String `tfsdk:"api_key"`
+	TagOrderMaxSize types.Int64  `tfsdk:"tag_order_max_size"`
 }
 
 type NPSProviderResourceData struct {
-	Client apipb.WorkshopServiceClient
+	Client          apipb.WorkshopServiceClient
+	TagOrderMaxSize int64
+}
+
+const defaultTagOrderMaxSize int64 = 25
+
+func configuredTagOrderMaxSize(value types.Int64) int64 {
+	if value.IsNull() || value.IsUnknown() {
+		return defaultTagOrderMaxSize
+	}
+	return value.ValueInt64()
 }
 
 func (p *NPSProvider) Metadata(ctx context.Context, req provider.MetadataRequest, resp *provider.MetadataResponse) {
@@ -54,7 +67,7 @@ func (p *NPSProvider) Schema(ctx context.Context, req provider.SchemaRequest, re
 	resp.Schema = schema.Schema{
 		Attributes: map[string]schema.Attribute{
 			"endpoint": schema.StringAttribute{
-				MarkdownDescription: "The base URL for the Workshop instance. Can also be supplied using the `WORKSHOP_ENDPOINT` envrionment variable.",
+				MarkdownDescription: "The base URL for the Workshop instance. Can also be supplied using the `WORKSHOP_ENDPOINT` environment variable. `NPS_ENDPOINT` remains available as a deprecated fallback.",
 				Optional:            true,
 			},
 			"api_key": schema.StringAttribute{
@@ -62,8 +75,31 @@ func (p *NPSProvider) Schema(ctx context.Context, req provider.SchemaRequest, re
 				Optional:            true,
 				Sensitive:           true,
 			},
+			"tag_order_max_size": schema.Int64Attribute{
+				MarkdownDescription: "Maximum number of tags accepted by `nps_workshop_tag_order`. Defaults to `25`; set this only when the Workshop tenant is configured with a different limit.",
+				Optional:            true,
+				Validators: []validator.Int64{
+					int64validator.AtLeast(1),
+				},
+			},
 		},
 	}
+}
+
+// resolveEndpoint applies the provider's endpoint precedence. Explicit
+// configuration wins over environment variables, and WORKSHOP_ENDPOINT wins
+// over the deprecated NPS_ENDPOINT alias.
+func resolveEndpoint(configured string) (endpoint string, usedDeprecatedEnv bool) {
+	if configured != "" {
+		return configured, false
+	}
+	if endpoint := os.Getenv("WORKSHOP_ENDPOINT"); endpoint != "" {
+		return endpoint, false
+	}
+	if endpoint := os.Getenv("NPS_ENDPOINT"); endpoint != "" {
+		return endpoint, true
+	}
+	return "", false
 }
 
 func (p *NPSProvider) Configure(ctx context.Context, req provider.ConfigureRequest, resp *provider.ConfigureResponse) {
@@ -74,14 +110,17 @@ func (p *NPSProvider) Configure(ctx context.Context, req provider.ConfigureReque
 		return
 	}
 
-	// Validate endpoint
-	endpoint := data.Endpoint.ValueString()
-	if e := os.Getenv("NPS_ENDPOINT"); e != "" {
-		endpoint = e
-	}
+	// Validate endpoint.
+	endpoint, usedDeprecatedEndpointEnv := resolveEndpoint(data.Endpoint.ValueString())
 	if endpoint == "" {
-		resp.Diagnostics.AddError("NPS Provider configuration error", "endpoing (or NPS_ENDPOINT environment variable) must be set")
+		resp.Diagnostics.AddError("NPS Provider configuration error", "endpoint (or WORKSHOP_ENDPOINT environment variable) must be set")
 		return
+	}
+	if usedDeprecatedEndpointEnv {
+		resp.Diagnostics.AddWarning(
+			"NPS_ENDPOINT is deprecated",
+			"Set WORKSHOP_ENDPOINT instead. NPS_ENDPOINT remains a fallback for compatibility.",
+		)
 	}
 
 	// Get the necessary auth call option.
@@ -95,7 +134,7 @@ func (p *NPSProvider) Configure(ctx context.Context, req provider.ConfigureReque
 
 	// If the endpoint is localhost, allow an insecure connection.
 	// Otherwise ensure TLS is used.
-	if data.Endpoint.ValueString() == "localhost:8080" {
+	if endpoint == "localhost:8080" {
 		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	} else {
 		opts = append(opts, grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{})))
@@ -110,7 +149,8 @@ func (p *NPSProvider) Configure(ctx context.Context, req provider.ConfigureReque
 	client := apipb.NewWorkshopServiceClient(conn)
 
 	providerData := &NPSProviderResourceData{
-		Client: client,
+		Client:          client,
+		TagOrderMaxSize: configuredTagOrderMaxSize(data.TagOrderMaxSize),
 	}
 
 	resp.DataSourceData = client
