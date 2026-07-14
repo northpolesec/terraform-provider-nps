@@ -177,6 +177,7 @@ func (p *NPSProvider) Resources(ctx context.Context) []func() resource.Resource 
 		NewSyncSettingsResource,
 		NewTagResource,
 		NewTagOrderResource,
+		NewWebhookSettingsResource,
 	}
 }
 
