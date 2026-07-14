@@ -35,6 +35,19 @@ type fakeWorkshopClient struct {
 	validateCELErr  error  // returned by ValidateCELRule
 	validateCELExpr string // captured expression
 	validateCELCall int    // number of ValidateCELRule calls
+
+	syncDeleteCalls int // number of DeleteSyncSettings calls
+	syncUpdateCalls int // number of UpdateSyncSettings calls
+}
+
+func (f *fakeWorkshopClient) DeleteSyncSettings(ctx context.Context, in *apipb.DeleteSyncSettingsRequest, _ ...grpc.CallOption) (*apipb.DeleteSyncSettingsResponse, error) {
+	f.syncDeleteCalls++
+	return apipb.DeleteSyncSettingsResponse_builder{}.Build(), nil
+}
+
+func (f *fakeWorkshopClient) UpdateSyncSettings(ctx context.Context, in *apipb.UpdateSyncSettingsRequest, _ ...grpc.CallOption) (*apipb.UpdateSyncSettingsResponse, error) {
+	f.syncUpdateCalls++
+	return apipb.UpdateSyncSettingsResponse_builder{}.Build(), nil
 }
 
 func (f *fakeWorkshopClient) ValidateCELRule(ctx context.Context, in *apipb.ValidateCELRuleRequest, _ ...grpc.CallOption) (*apipb.ValidateCELRuleResponse, error) {

@@ -20,6 +20,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/northpolesec/terraform-provider-nps/internal/utils"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 
 	svcpb "buf.build/gen/go/northpolesec/workshop-api/grpc/go/workshop/v1/workshopv1grpc"
@@ -31,6 +32,7 @@ var _ resource.ResourceWithConfigure = &SyncSettingsResource{}
 var _ resource.ResourceWithImportState = &SyncSettingsResource{}
 var _ resource.ResourceWithIdentity = &SyncSettingsResource{}
 var _ resource.ResourceWithConfigValidators = &SyncSettingsResource{}
+var _ resource.ResourceWithModifyPlan = &SyncSettingsResource{}
 
 func NewSyncSettingsResource() resource.Resource {
 	return &SyncSettingsResource{}
@@ -376,6 +378,22 @@ func validateRemovablePolicyBlock(p path.Path, m *SyncSettingsRemovableMediaPoli
 	}
 }
 
+func (r *SyncSettingsResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	// No plan to validate on destroy, and the client may be unset if the
+	// provider isn't fully configured (e.g. during validate).
+	if req.Plan.Raw.IsNull() || r.client == nil {
+		return
+	}
+
+	var data SyncSettingsResourceModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	r.validateCelFallbackRules(ctx, data.CelFallbackRule, &resp.Diagnostics)
+}
+
 func (r *SyncSettingsResource) Configure(ctx context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
 	if req.ProviderData == nil {
 		return
@@ -523,6 +541,14 @@ func (r *SyncSettingsResource) IdentitySchema(ctx context.Context, req resource.
 // be deleted, so that tenants not using telemetry are never forced to call the
 // (feature-gated) telemetry RPCs.
 func (r *SyncSettingsResource) replaceTagSettings(ctx context.Context, data *SyncSettingsResourceModel, priorTelemetryEnabled types.Bool, diags *diag.Diagnostics) bool {
+	// Validate CEL fallback expressions server-side before the destructive
+	// delete/update below, so an invalid expression fails without clearing the
+	// tag's existing settings.
+	r.validateCelFallbackRules(ctx, data.CelFallbackRule, diags)
+	if diags.HasError() {
+		return false
+	}
+
 	ss, d := syncSettingsModelToProto(ctx, data)
 	diags.Append(d...)
 	if diags.HasError() {
@@ -546,6 +572,31 @@ func (r *SyncSettingsResource) replaceTagSettings(ctx context.Context, data *Syn
 	}
 
 	return r.applyTelemetryConfig(ctx, data.Tag.ValueString(), data.TelemetryEnabled, priorTelemetryEnabled, diags)
+}
+
+// validateCelFallbackRules asks the server to validate each fallback rule's CEL
+// expression. Expressions that are unknown (interpolated from another resource
+// at plan time) or empty are skipped; the schema already requires a non-empty
+// expression, so an empty value here can only be an unresolved reference.
+func (r *SyncSettingsResource) validateCelFallbackRules(ctx context.Context, rules []SyncSettingsCelFallbackRuleModel, diags *diag.Diagnostics) {
+	for i, rule := range rules {
+		if rule.Expression.IsUnknown() || rule.Expression.ValueString() == "" {
+			continue
+		}
+		if _, err := r.client.ValidateCELRule(ctx, apipb.ValidateCELRuleRequest_builder{
+			Expression: proto.String(rule.Expression.ValueString()),
+		}.Build()); err != nil {
+			msg := err.Error()
+			if st, ok := status.FromError(err); ok {
+				msg = st.Message()
+			}
+			diags.AddAttributeError(
+				path.Root("cel_fallback_rule").AtListIndex(i).AtName("expression"),
+				"Invalid CEL expression",
+				fmt.Sprintf("The CEL fallback expression failed validation: %s", msg),
+			)
+		}
+	}
 }
 
 // applyTelemetryConfig reconciles the tag's TelemetryConfig with the plan.
