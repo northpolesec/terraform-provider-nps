@@ -116,7 +116,7 @@ Optional:
 - `default_duration_minutes` (Number) Default elevation duration when the user requests admin without specifying one. Must not exceed `max_minutes`. Omit (rather than set `0`) to fall back to `max_minutes` as the default.
 - `max_minutes` (Number) Maximum number of minutes a user may be elevated to administrator. Required when `state` is `ENABLED`.
 - `require_justification` (Boolean) Whether the user must supply a free-text justification to elevate.
-- `state` (String) Whether on-demand admin mode is enabled. One of: `ON_DEMAND_ADMIN_MODE_STATE_ENABLED`, `ON_DEMAND_ADMIN_MODE_STATE_DISABLED`.
+- `state` (String) Whether on-demand admin mode is enabled. One of: `ON_DEMAND_ADMIN_MODE_STATE_ENABLED`, `ON_DEMAND_ADMIN_MODE_STATE_DISABLED`. Must be set whenever the `on_demand_admin_mode` block is present.
 
 
 <a id="nestedblock--on_demand_monitor_mode"></a>

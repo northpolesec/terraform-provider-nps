@@ -271,6 +271,40 @@ func TestSyncSettingsRoundtrip(t *testing.T) {
 	}
 }
 
+// TestSyncSettingsRequireJustificationFalseRoundtrip ensures an explicit
+// require_justification = false survives proto->model->proto rather than
+// drifting to null (which would cause a perpetual diff after refresh).
+func TestSyncSettingsRequireJustificationFalseRoundtrip(t *testing.T) {
+	ctx := context.Background()
+
+	original := apipb.SyncSettings_builder{
+		Tag: "dev",
+		OnDemandAdminMode: apipb.OnDemandAdminMode_builder{
+			State:                apipb.OnDemandAdminMode_ON_DEMAND_ADMIN_MODE_STATE_ENABLED,
+			RequireJustification: false,
+		}.Build(),
+	}.Build()
+
+	model, diags := syncSettingsProtoToModel(ctx, original)
+	if diags.HasError() {
+		t.Fatalf("proto->model diagnostics: %v", diags)
+	}
+	if model.OnDemandAdminMode == nil {
+		t.Fatalf("expected on_demand_admin_mode block")
+	}
+	if got := model.OnDemandAdminMode.RequireJustification; got.IsNull() || got.ValueBool() {
+		t.Errorf("require_justification should round-trip to explicit false, got %v", got)
+	}
+
+	round, diags := syncSettingsModelToProto(ctx, &model)
+	if diags.HasError() {
+		t.Fatalf("model->proto diagnostics: %v", diags)
+	}
+	if round.GetOnDemandAdminMode().GetRequireJustification() {
+		t.Errorf("require_justification should remain false after roundtrip")
+	}
+}
+
 // TestSyncSettingsClientModeUnknownIsNull ensures an UNKNOWN client mode from
 // the server maps to a null Terraform value (no spurious diff).
 func TestSyncSettingsClientModeUnknownIsNull(t *testing.T) {

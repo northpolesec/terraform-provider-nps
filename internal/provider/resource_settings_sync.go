@@ -261,8 +261,8 @@ func (r *SyncSettingsResource) Schema(ctx context.Context, req resource.SchemaRe
 				MarkdownDescription: "On-demand admin mode settings, allowing users to elevate to administrator for a bounded time.",
 				Attributes: map[string]schema.Attribute{
 					"state": schema.StringAttribute{
-						Description:         "Whether on-demand admin mode is enabled. One of: ON_DEMAND_ADMIN_MODE_STATE_ENABLED, ON_DEMAND_ADMIN_MODE_STATE_DISABLED.",
-						MarkdownDescription: "Whether on-demand admin mode is enabled. One of: `ON_DEMAND_ADMIN_MODE_STATE_ENABLED`, `ON_DEMAND_ADMIN_MODE_STATE_DISABLED`.",
+						Description:         "Whether on-demand admin mode is enabled. One of: ON_DEMAND_ADMIN_MODE_STATE_ENABLED, ON_DEMAND_ADMIN_MODE_STATE_DISABLED. Must be set whenever the on_demand_admin_mode block is present.",
+						MarkdownDescription: "Whether on-demand admin mode is enabled. One of: `ON_DEMAND_ADMIN_MODE_STATE_ENABLED`, `ON_DEMAND_ADMIN_MODE_STATE_DISABLED`. Must be set whenever the `on_demand_admin_mode` block is present.",
 						Optional:            true,
 						Validators: []validator.String{
 							stringvalidator.OneOf(syncSettingsOnDemandAdminModeStateValues...),
@@ -962,9 +962,9 @@ func syncSettingsProtoToModel(ctx context.Context, ss *apipb.SyncSettings) (Sync
 			State:                  types.StringValue(odam.GetState().String()),
 			MaxMinutes:             zeroUint32ToNullInt64(odam.GetMaxMinutes()),
 			DefaultDurationMinutes: zeroUint32ToNullInt64(odam.GetDefaultDurationMinutes()),
-			// require_justification is a non-optional bool; treat false as unset
-			// so an omitted config attribute round-trips to null rather than false.
-			RequireJustification: falseBoolToNull(odam.GetRequireJustification()),
+			// require_justification has no proto presence; reflect it directly so an
+			// explicit false round-trips instead of drifting to null.
+			RequireJustification: types.BoolValue(odam.GetRequireJustification()),
 		}
 	}
 
@@ -1014,15 +1014,6 @@ func zeroUint32ToNullInt64(v uint32) types.Int64 {
 		return types.Int64Null()
 	}
 	return types.Int64Value(int64(v))
-}
-
-// falseBoolToNull treats a false proto value as "unset" so that the optional
-// Terraform attribute round-trips to null rather than false.
-func falseBoolToNull(v bool) types.Bool {
-	if !v {
-		return types.BoolNull()
-	}
-	return types.BoolValue(true)
 }
 
 func removableMediaPolicyProtoToModel(ctx context.Context, p *apipb.RemovableMediaPolicy, diags *diag.Diagnostics) *SyncSettingsRemovableMediaPolicyModel {
