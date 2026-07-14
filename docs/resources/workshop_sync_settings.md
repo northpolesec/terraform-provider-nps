@@ -35,6 +35,13 @@ resource "nps_workshop_sync_settings" "dev_settings" {
     custom_msg = "No hypervisors!"
   }
 
+  on_demand_admin_mode {
+    state                    = "ON_DEMAND_ADMIN_MODE_STATE_ENABLED"
+    max_minutes              = 120
+    default_duration_minutes = 15
+    require_justification    = true
+  }
+
   push_sync_interval = 300
 
   telemetry_enabled = true
@@ -62,6 +69,7 @@ resource "nps_workshop_sync_settings" "dev_settings" {
 - `full_sync_interval` (Number) Seconds between full syncs. Must be between `60` and `86400` when set.
 - `network_extension_enabled` (Boolean) Whether the Santa network extension is enabled.
 - `network_mount` (Block, Optional) Network mount handling settings. (see [below for nested schema](#nestedblock--network_mount))
+- `on_demand_admin_mode` (Block, Optional) On-demand admin mode settings, allowing users to elevate to administrator for a bounded time. (see [below for nested schema](#nestedblock--on_demand_admin_mode))
 - `on_demand_monitor_mode` (Block, Optional) On-demand monitor mode settings. (see [below for nested schema](#nestedblock--on_demand_monitor_mode))
 - `push_sync_interval` (Number) Seconds between full syncs requested via push notifications (proto field `push_notification_full_sync_interval_seconds`). Must be between `60` and `86400` when set.
 - `removable_media_policy` (Block, Optional) Baseline removable-media policy applied to every mount. (see [below for nested schema](#nestedblock--removable_media_policy))
@@ -98,6 +106,17 @@ Optional:
 - `allowed_hosts` (List of String) Hosts whose network mounts are permitted even when `block_mount` is enabled. Unset leaves the field unspecified; an empty list explicitly clears the inherited value.
 - `banned_message` (String) Message shown to the user when a network mount is blocked.
 - `block_mount` (String) Whether network mounts are blocked. One of: `BLOCK_MOUNT_ENABLED`, `BLOCK_MOUNT_DISABLED`.
+
+
+<a id="nestedblock--on_demand_admin_mode"></a>
+### Nested Schema for `on_demand_admin_mode`
+
+Optional:
+
+- `default_duration_minutes` (Number) Default elevation duration when the user requests admin without specifying one. Must not exceed `max_minutes`. Omit (rather than set `0`) to fall back to `max_minutes` as the default.
+- `max_minutes` (Number) Maximum number of minutes a user may be elevated to administrator. Required when `state` is `ENABLED`.
+- `require_justification` (Boolean) Whether the user must supply a free-text justification to elevate.
+- `state` (String) Whether on-demand admin mode is enabled. One of: `ON_DEMAND_ADMIN_MODE_STATE_ENABLED`, `ON_DEMAND_ADMIN_MODE_STATE_DISABLED`. Must be set whenever the `on_demand_admin_mode` block is present.
 
 
 <a id="nestedblock--on_demand_monitor_mode"></a>

@@ -157,6 +157,12 @@ func TestSyncSettingsRoundtrip(t *testing.T) {
 			MaxMinutes:             60,
 			DefaultDurationMinutes: 30,
 		}.Build(),
+		OnDemandAdminMode: apipb.OnDemandAdminMode_builder{
+			State:                  apipb.OnDemandAdminMode_ON_DEMAND_ADMIN_MODE_STATE_ENABLED,
+			MaxMinutes:             120,
+			DefaultDurationMinutes: 15,
+			RequireJustification:   true,
+		}.Build(),
 		NetworkMount: apipb.SyncSettings_NetworkMount_builder{
 			BlockMount:    apipb.SyncSettings_NetworkMount_BLOCK_MOUNT_ENABLED,
 			BannedMessage: proto.String("blocked"),
@@ -230,6 +236,17 @@ func TestSyncSettingsRoundtrip(t *testing.T) {
 		t.Errorf("odmm minutes mismatch: max=%d default=%d", odmm.GetMaxMinutes(), odmm.GetDefaultDurationMinutes())
 	}
 
+	odam := round.GetOnDemandAdminMode()
+	if odam.GetState() != apipb.OnDemandAdminMode_ON_DEMAND_ADMIN_MODE_STATE_ENABLED {
+		t.Errorf("odam state mismatch: %v", odam.GetState())
+	}
+	if odam.GetMaxMinutes() != 120 || odam.GetDefaultDurationMinutes() != 15 {
+		t.Errorf("odam minutes mismatch: max=%d default=%d", odam.GetMaxMinutes(), odam.GetDefaultDurationMinutes())
+	}
+	if !odam.GetRequireJustification() {
+		t.Errorf("odam require_justification mismatch")
+	}
+
 	nm := round.GetNetworkMount()
 	if nm.GetBlockMount() != apipb.SyncSettings_NetworkMount_BLOCK_MOUNT_ENABLED {
 		t.Errorf("network_mount block_mount mismatch: %v", nm.GetBlockMount())
@@ -254,6 +271,40 @@ func TestSyncSettingsRoundtrip(t *testing.T) {
 	}
 }
 
+// TestSyncSettingsRequireJustificationFalseRoundtrip ensures an explicit
+// require_justification = false survives proto->model->proto rather than
+// drifting to null (which would cause a perpetual diff after refresh).
+func TestSyncSettingsRequireJustificationFalseRoundtrip(t *testing.T) {
+	ctx := context.Background()
+
+	original := apipb.SyncSettings_builder{
+		Tag: "dev",
+		OnDemandAdminMode: apipb.OnDemandAdminMode_builder{
+			State:                apipb.OnDemandAdminMode_ON_DEMAND_ADMIN_MODE_STATE_ENABLED,
+			RequireJustification: false,
+		}.Build(),
+	}.Build()
+
+	model, diags := syncSettingsProtoToModel(ctx, original)
+	if diags.HasError() {
+		t.Fatalf("proto->model diagnostics: %v", diags)
+	}
+	if model.OnDemandAdminMode == nil {
+		t.Fatalf("expected on_demand_admin_mode block")
+	}
+	if got := model.OnDemandAdminMode.RequireJustification; got.IsNull() || got.ValueBool() {
+		t.Errorf("require_justification should round-trip to explicit false, got %v", got)
+	}
+
+	round, diags := syncSettingsModelToProto(ctx, &model)
+	if diags.HasError() {
+		t.Fatalf("model->proto diagnostics: %v", diags)
+	}
+	if round.GetOnDemandAdminMode().GetRequireJustification() {
+		t.Errorf("require_justification should remain false after roundtrip")
+	}
+}
+
 // TestSyncSettingsClientModeUnknownIsNull ensures an UNKNOWN client mode from
 // the server maps to a null Terraform value (no spurious diff).
 func TestSyncSettingsClientModeUnknownIsNull(t *testing.T) {
@@ -274,5 +325,8 @@ func TestSyncSettingsClientModeUnknownIsNull(t *testing.T) {
 	}
 	if model.OnDemandMonitorMode != nil {
 		t.Errorf("expected nil on_demand_monitor_mode block")
+	}
+	if model.OnDemandAdminMode != nil {
+		t.Errorf("expected nil on_demand_admin_mode block")
 	}
 }
