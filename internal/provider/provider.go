@@ -161,6 +161,7 @@ func (p *NPSProvider) Configure(ctx context.Context, req provider.ConfigureReque
 func (p *NPSProvider) Resources(ctx context.Context) []func() resource.Resource {
 	return []func() resource.Resource{
 		NewAPIKeyResource,
+		NewAPIKeyCIDRSettingsResource,
 		NewAutoUpdateSettingsResource,
 		NewChatSettingsResource,
 		NewDirectorySettingsResource,
