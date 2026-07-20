@@ -77,7 +77,7 @@ resource "nps_workshop_rule" "yes" {
 - `comment` (String) A comment to add to this rule. Will be displayed in the Workshop UI.
 - `custom_msg` (String) A custom message to display to the user when this rule causes Santa to block the execution.
 - `custom_url` (String) A custom URL to redirect the user to when this rule causes Santa to block the execution. Setting a custom URL will override the `EventDetailURL` used by the Open button.
-- `seatbelt_policy` (String) The seatbelt policy to apply when running the targeted process under `santactl sandbox`. Required when the policy is set to `SEATBELT`.
+- `seatbelt_policy` (String) The seatbelt policy to apply when running the targeted process under `santactl sandbox`. Required when the policy is set to `SEATBELT` or the provided `cel_expr` returns `SEATBELT` on any branch.
 
 ### Read-Only
 
