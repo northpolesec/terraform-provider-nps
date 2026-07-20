@@ -61,6 +61,7 @@ type RuleResourceModel struct {
 	CustomMsg             types.String                    `tfsdk:"custom_msg"`
 	CustomURL             types.String                    `tfsdk:"custom_url"`
 	CELExpr               types.String                    `tfsdk:"cel_expr"`
+	SeatbeltPolicy        types.String                    `tfsdk:"seatbelt_policy"`
 	AffectedHostThreshold *RuleAffectedHostThresholdModel `tfsdk:"affected_host_threshold"`
 
 	Id types.String `tfsdk:"id"`
@@ -157,8 +158,8 @@ func (r *RuleResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 				},
 			},
 			"policy": schema.StringAttribute{
-				Description:         "The policy for this rule. The possible values are: ALLOWLIST, ALLOWLIST_COMPILER, BLOCKLIST, SILENT_BLOCKLIST, and CEL.",
-				MarkdownDescription: "The policy for this rule. The possible values are: `ALLOWLIST`, `ALLOWLIST_COMPILER`, `BLOCKLIST`, `SILENT_BLOCKLIST`, and `CEL`.",
+				Description:         "The policy for this rule. The possible values are: ALLOWLIST, ALLOWLIST_COMPILER, BLOCKLIST, SILENT_BLOCKLIST, CEL, and SEATBELT.",
+				MarkdownDescription: "The policy for this rule. The possible values are: `ALLOWLIST`, `ALLOWLIST_COMPILER`, `BLOCKLIST`, `SILENT_BLOCKLIST`, `CEL`, and `SEATBELT`.",
 				Required:            true,
 				Validators: []validator.String{
 					stringvalidator.OneOf(utils.ProtoEnumToList(apipb.Policy(0).Descriptor())...),
@@ -194,6 +195,11 @@ func (r *RuleResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 			"cel_expr": schema.StringAttribute{
 				Description:         "A CEL expression to evaluate when this rule matches. Only valid when the policy is set to CEL.",
 				MarkdownDescription: "A CEL expression to evaluate when this rule matches. Only valid when the policy is set to `CEL`.",
+				Optional:            true,
+			},
+			"seatbelt_policy": schema.StringAttribute{
+				Description:         "The seatbelt policy to apply when running the targeted process under `santactl sandbox`. Required when the policy is set to SEATBELT.",
+				MarkdownDescription: "The seatbelt policy to apply when running the targeted process under `santactl sandbox`. Required when the policy is set to `SEATBELT`.",
 				Optional:            true,
 			},
 			"comment": schema.StringAttribute{
@@ -261,6 +267,12 @@ func (r *RuleResource) ConfigValidators(ctx context.Context) []resource.ConfigVa
 				resp.Diagnostics.AddError("CEL expression is required", "CEL expression is required when policy is set to CEL")
 			}
 
+			// A seatbelt_policy interpolated from another resource is unknown at
+			// validate time; skip the check and let a later plan/apply resolve it.
+			if data.Policy.ValueString() == "SEATBELT" && !data.SeatbeltPolicy.IsUnknown() && data.SeatbeltPolicy.ValueString() == "" {
+				resp.Diagnostics.AddError("Seatbelt policy is required", "seatbelt_policy is required when policy is set to SEATBELT")
+			}
+
 			if data.AffectedHostThreshold != nil {
 				if data.AffectedHostThreshold.HostCount.IsNull() {
 					resp.Diagnostics.AddAttributeError(
@@ -298,19 +310,21 @@ func (r *RuleResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRe
 		return
 	}
 
-	resp.Diagnostics.Append(r.validateCELExpr(ctx, data.Policy, data.CELExpr)...)
+	resp.Diagnostics.Append(r.validateCELExpr(ctx, data.Policy, data.CELExpr, data.SeatbeltPolicy)...)
 }
 
 // validateCELExpr asks the server to validate the rule's CEL expression. It is a
 // no-op unless the policy is CEL and the expression is known and non-empty (an
 // expression interpolated from another resource may still be unknown at plan).
-func (r *RuleResource) validateCELExpr(ctx context.Context, policy, celExpr types.String) diag.Diagnostics {
+// When the server reports the expression can return SEATBELT, seatbelt_policy is
+// required; we enforce that here since it depends on the server's analysis.
+func (r *RuleResource) validateCELExpr(ctx context.Context, policy, celExpr, seatbeltPolicy types.String) diag.Diagnostics {
 	var diags diag.Diagnostics
 	if policy.ValueString() != "CEL" || celExpr.IsUnknown() || celExpr.ValueString() == "" {
 		return diags
 	}
 
-	_, err := r.client.ValidateCELRule(ctx, apipb.ValidateCELRuleRequest_builder{
+	valResp, err := r.client.ValidateCELRule(ctx, apipb.ValidateCELRuleRequest_builder{
 		Expression: proto.String(celExpr.ValueString()),
 	}.Build())
 	if err != nil {
@@ -322,6 +336,17 @@ func (r *RuleResource) validateCELExpr(ctx context.Context, policy, celExpr type
 			path.Root("cel_expr"),
 			"Invalid CEL expression",
 			fmt.Sprintf("The CEL expression failed validation: %s", msg),
+		)
+		return diags
+	}
+
+	// A seatbelt_policy interpolated from another resource may still be unknown;
+	// skip the check and let a later plan resolve it.
+	if valResp.GetCanReturnSeatbelt() && !seatbeltPolicy.IsUnknown() && seatbeltPolicy.ValueString() == "" {
+		diags.AddAttributeError(
+			path.Root("seatbelt_policy"),
+			"Seatbelt policy is required",
+			"seatbelt_policy is required because this CEL expression can return SEATBELT",
 		)
 	}
 	return diags
@@ -376,14 +401,15 @@ func buildCreateRuleRequest(data RuleResourceModel) *apipb.CreateRuleRequest {
 	rulePolicy := apipb.Policy_value[data.Policy.ValueString()]
 
 	ruleBuilder := apipb.Rule_builder{
-		Identifier: data.Identifier.ValueString(),
-		RuleType:   apipb.RuleType(ruleType),
-		Policy:     apipb.Policy(rulePolicy),
-		Tag:        data.Tag.ValueString(),
-		Comment:    data.Comment.ValueString(),
-		CustomMsg:  data.CustomMsg.ValueString(),
-		CustomUrl:  data.CustomURL.ValueString(),
-		CelExpr:    data.CELExpr.ValueString(),
+		Identifier:     data.Identifier.ValueString(),
+		RuleType:       apipb.RuleType(ruleType),
+		Policy:         apipb.Policy(rulePolicy),
+		Tag:            data.Tag.ValueString(),
+		Comment:        data.Comment.ValueString(),
+		CustomMsg:      data.CustomMsg.ValueString(),
+		CustomUrl:      data.CustomURL.ValueString(),
+		CelExpr:        data.CELExpr.ValueString(),
+		SeatbeltPolicy: data.SeatbeltPolicy.ValueString(),
 	}
 	if br := data.BlockReason.ValueString(); br != "" {
 		ruleBuilder.BlockReason = apipb.Rule_BlockReason(apipb.Rule_BlockReason_value[br])
@@ -460,6 +486,9 @@ func (r *RuleResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 	}
 	if rule.GetCelExpr() != "" {
 		data.CELExpr = types.StringValue(rule.GetCelExpr())
+	}
+	if rule.GetSeatbeltPolicy() != "" {
+		data.SeatbeltPolicy = types.StringValue(rule.GetSeatbeltPolicy())
 	}
 
 	// Set the identity
@@ -592,6 +621,9 @@ func (r *RuleResource) List(ctx context.Context, req list.ListRequest, stream *l
 				}
 				if rule.GetCelExpr() != "" {
 					model.CELExpr = types.StringValue(rule.GetCelExpr())
+				}
+				if rule.GetSeatbeltPolicy() != "" {
+					model.SeatbeltPolicy = types.StringValue(rule.GetSeatbeltPolicy())
 				}
 
 				result.Diagnostics.Append(result.Resource.Set(ctx, model)...)
