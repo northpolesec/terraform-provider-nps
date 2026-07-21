@@ -47,8 +47,8 @@ func (r *APIKeyCIDRSettingsResource) Metadata(ctx context.Context, req resource.
 
 func (r *APIKeyCIDRSettingsResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description:         "The nps_workshop_settings_apikey_cidr resource manages the CIDR restrictions applied to API key requests for Workshop. This is a singleton resource — one per tenant, not per key. The initial apply imports any existing values; subsequent applies push the configured values. Destroying the resource removes it from state without modifying the server.",
-		MarkdownDescription: "The `nps_workshop_settings_apikey_cidr` resource manages the CIDR restrictions applied to API key requests for Workshop. This is a singleton resource — one per tenant, not per key. The initial apply imports any existing values; subsequent applies push the configured values. Destroying the resource removes it from state without modifying the server.",
+		Description:         "The nps_workshop_settings_apikey_cidr resource manages the CIDR restrictions applied to API key requests for Workshop. This is a singleton resource — one per tenant, not per key. Every apply, including the first, pushes the full configured settings, overwriting whatever is currently on the server. Destroying the resource removes it from state without modifying the server.",
+		MarkdownDescription: "The `nps_workshop_settings_apikey_cidr` resource manages the CIDR restrictions applied to API key requests for Workshop. This is a singleton resource — one per tenant, not per key. Every apply, including the first, pushes the full configured settings, overwriting whatever is currently on the server. Destroying the resource removes it from state without modifying the server.",
 
 		Attributes: map[string]schema.Attribute{
 			"enabled": schema.BoolAttribute{
