@@ -198,8 +198,8 @@ func (r *RuleResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 				Optional:            true,
 			},
 			"seatbelt_policy": schema.StringAttribute{
-				Description:         "The seatbelt policy to apply when running the targeted process under `santactl sandbox`. Required when the policy is set to SEATBELT.",
-				MarkdownDescription: "The seatbelt policy to apply when running the targeted process under `santactl sandbox`. Required when the policy is set to `SEATBELT`.",
+				Description:         "The seatbelt policy to apply when running the targeted process under `santactl sandbox`. Required when the policy is set to SEATBELT, or when the policy is CEL and the CEL expression can return SEATBELT.",
+				MarkdownDescription: "The seatbelt policy to apply when running the targeted process under `santactl sandbox`. Required when the policy is set to `SEATBELT`, or when the policy is `CEL` and the CEL expression can return `SEATBELT`.",
 				Optional:            true,
 			},
 			"comment": schema.StringAttribute{
