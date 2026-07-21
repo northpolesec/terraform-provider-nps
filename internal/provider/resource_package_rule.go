@@ -42,7 +42,8 @@ func NewPackageRuleResource() resource.Resource {
 
 // PackageRuleResource defines the resource implementation.
 type PackageRuleResource struct {
-	client svcpb.WorkshopServiceClient
+	client               svcpb.WorkshopServiceClient
+	deleteExecutionRules bool
 }
 
 // PackageRuleIdentityModel describes the identity data model.
@@ -73,8 +74,8 @@ func (r *PackageRuleResource) Metadata(ctx context.Context, req resource.Metadat
 
 func (r *PackageRuleResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description:         "The nps_workshop_package_rule resource manages Package Rules. Package rules sync identifiers from GAL for a package. Management of package rules requires the read:rules and write:rules permissions. Changing tag, name, or source forces replacement; add a create_before_destroy lifecycle block to avoid a window where the rule does not exist.",
-		MarkdownDescription: "The `nps_workshop_package_rule` resource manages Package Rules.\n\nPackage rules sync identifiers from GAL for a package.\n\nManagement of package rules requires the `read:rules` and `write:rules` permissions.\n\nUpdates to non-key fields (such as `policy`) are applied atomically in place. Changing the rule's natural key (`tag`, `name`, or `source`) forces the rule to be replaced: by default Terraform destroys the old rule before creating the new one, leaving a brief window with no rule in place. To avoid that window, add a `create_before_destroy` lifecycle block:\n\n```hcl\nresource \"nps_workshop_package_rule\" \"example\" {\n  # ...\n  lifecycle {\n    create_before_destroy = true\n  }\n}\n```",
+		Description:         "The nps_workshop_package_rule resource manages Package Rules. Package rules sync identifiers from GAL for a package. By default, deleting a package rule retains its generated execution rules; set the provider's delete_package_execution_rules option to true to delete them together. Management of package rules requires the read:rules and write:rules permissions. Changing tag, name, or source forces replacement; add a create_before_destroy lifecycle block to avoid a window where the rule does not exist.",
+		MarkdownDescription: "The `nps_workshop_package_rule` resource manages Package Rules.\n\nPackage rules sync identifiers from GAL for a package. By default, deleting a package rule retains its generated execution rules; set the provider's `delete_package_execution_rules` option to `true` to delete them together.\n\nManagement of package rules requires the `read:rules` and `write:rules` permissions.\n\nUpdates to non-key fields (such as `policy`) are applied atomically in place. Changing the rule's natural key (`tag`, `name`, or `source`) forces the rule to be replaced: by default Terraform destroys the old rule before creating the new one, leaving a brief window with no rule in place. To avoid that window, add a `create_before_destroy` lifecycle block:\n\n```hcl\nresource \"nps_workshop_package_rule\" \"example\" {\n  # ...\n  lifecycle {\n    create_before_destroy = true\n  }\n}\n```",
 
 		Attributes: map[string]schema.Attribute{
 			"tag": schema.StringAttribute{
@@ -168,6 +169,7 @@ func (r *PackageRuleResource) Configure(ctx context.Context, req resource.Config
 		return
 	}
 	r.client = pd.Client
+	r.deleteExecutionRules = pd.DeletePackageExecutionRules
 }
 
 func (r *PackageRuleResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
@@ -345,6 +347,13 @@ func (r *PackageRuleResource) upsertPackageRule(ctx context.Context, plan Packag
 	return types.Int64Value(crResp.GetRuleId()), diags
 }
 
+func packageRuleDeleteRequest(id int64, deleteExecutionRules bool) *apipb.DeletePackageRuleRequest {
+	return apipb.DeletePackageRuleRequest_builder{
+		RuleId:               proto.Int64(id),
+		DeleteExecutionRules: proto.Bool(deleteExecutionRules),
+	}.Build()
+}
+
 func (r *PackageRuleResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
 	var data PackageRuleResourceModel
 
@@ -357,9 +366,7 @@ func (r *PackageRuleResource) Delete(ctx context.Context, req resource.DeleteReq
 	}
 
 	ruleId := data.Id.ValueInt64()
-	_, err := r.client.DeletePackageRule(ctx, apipb.DeletePackageRuleRequest_builder{
-		RuleId: proto.Int64(ruleId),
-	}.Build())
+	_, err := r.client.DeletePackageRule(ctx, packageRuleDeleteRequest(ruleId, r.deleteExecutionRules))
 	if err != nil && !isRuleDeleteNoOp(err) {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Failed to delete package rule: %v", err))
 		return
