@@ -53,3 +53,5 @@ provider "nps" {
 
 - `api_key` (String, Sensitive) The API key to use. Can also be supplied using the `WORKSHOP_API_KEY` environment variable. If no API key is provided, the provider will attempt to use a stored short-lived user token.
 - `endpoint` (String) The base URL for the Workshop instance. Can also be supplied using the `WORKSHOP_ENDPOINT` environment variable. `NPS_ENDPOINT` remains available as a deprecated fallback.
+- `tag_order_max_size` (Number) Maximum number of tags accepted by `nps_workshop_tag_order`. Defaults to `25`; set this only when the Workshop tenant is configured with a different limit.
+

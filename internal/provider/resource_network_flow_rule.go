@@ -556,7 +556,7 @@ func (r *NetworkFlowRuleResource) Delete(ctx context.Context, req resource.Delet
 	_, err := r.client.DeleteNetworkFlowRule(ctx, apipb.DeleteNetworkFlowRuleRequest_builder{
 		RuleId: proto.Int64(ruleId),
 	}.Build())
-	if err != nil {
+	if err != nil && !isRuleDeleteNoOp(err) {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Failed to delete network flow rule: %v", err))
 		return
 	}

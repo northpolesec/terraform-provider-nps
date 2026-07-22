@@ -507,7 +507,7 @@ func (r *FileAccessRuleResource) Delete(ctx context.Context, req resource.Delete
 	_, err := r.client.DeleteFileAccessRule(ctx, apipb.DeleteFileAccessRuleRequest_builder{
 		RuleId: proto.Int64(ruleId),
 	}.Build())
-	if err != nil {
+	if err != nil && !isRuleDeleteNoOp(err) {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Failed to delete file access rule: %v", err))
 		return
 	}

@@ -32,9 +32,23 @@ type fakeWorkshopClient struct {
 	deleteCalls   int
 	lastCreateReq *apipb.CreateRuleRequest // captured for payload assertions
 
-	validateCELErr  error  // returned by ValidateCELRule
-	validateCELExpr string // captured expression
-	validateCELCall int    // number of ValidateCELRule calls
+	validateCELErr      error  // returned by ValidateCELRule
+	validateCELExpr     string // captured expression
+	validateCELCall     int    // number of ValidateCELRule calls
+	validateCELSeatbelt bool   // CanReturnSeatbelt on the ValidateCELRule response
+
+	syncDeleteCalls int // number of DeleteSyncSettings calls
+	syncUpdateCalls int // number of UpdateSyncSettings calls
+}
+
+func (f *fakeWorkshopClient) DeleteSyncSettings(ctx context.Context, in *apipb.DeleteSyncSettingsRequest, _ ...grpc.CallOption) (*apipb.DeleteSyncSettingsResponse, error) {
+	f.syncDeleteCalls++
+	return apipb.DeleteSyncSettingsResponse_builder{}.Build(), nil
+}
+
+func (f *fakeWorkshopClient) UpdateSyncSettings(ctx context.Context, in *apipb.UpdateSyncSettingsRequest, _ ...grpc.CallOption) (*apipb.UpdateSyncSettingsResponse, error) {
+	f.syncUpdateCalls++
+	return apipb.UpdateSyncSettingsResponse_builder{}.Build(), nil
 }
 
 func (f *fakeWorkshopClient) ValidateCELRule(ctx context.Context, in *apipb.ValidateCELRuleRequest, _ ...grpc.CallOption) (*apipb.ValidateCELRuleResponse, error) {
@@ -43,7 +57,9 @@ func (f *fakeWorkshopClient) ValidateCELRule(ctx context.Context, in *apipb.Vali
 	if f.validateCELErr != nil {
 		return nil, f.validateCELErr
 	}
-	return apipb.ValidateCELRuleResponse_builder{}.Build(), nil
+	return apipb.ValidateCELRuleResponse_builder{
+		CanReturnSeatbelt: proto.Bool(f.validateCELSeatbelt),
+	}.Build(), nil
 }
 
 func (f *fakeWorkshopClient) CreateRule(ctx context.Context, in *apipb.CreateRuleRequest, _ ...grpc.CallOption) (*apipb.CreateRuleResponse, error) {
@@ -183,6 +199,31 @@ func TestUpsertRulePropagatesBlockReason(t *testing.T) {
 	}
 }
 
+// TestBuildCreateRuleRequestSeatbeltPolicy verifies a SEATBELT rule sends its
+// seatbelt_policy on the upsert request, and that it is not sent when unset.
+func TestBuildCreateRuleRequestSeatbeltPolicy(t *testing.T) {
+	req := buildCreateRuleRequest(RuleResourceModel{
+		Identifier:     types.StringValue("abc"),
+		RuleType:       types.StringValue("BINARY"),
+		Tag:            types.StringValue("global"),
+		Policy:         types.StringValue("SEATBELT"),
+		SeatbeltPolicy: types.StringValue("my-profile"),
+	})
+	if got := req.GetRule().GetSeatbeltPolicy(); got != "my-profile" {
+		t.Errorf("seatbelt_policy: got %q, want %q", got, "my-profile")
+	}
+
+	req = buildCreateRuleRequest(RuleResourceModel{
+		Identifier: types.StringValue("abc"),
+		RuleType:   types.StringValue("BINARY"),
+		Tag:        types.StringValue("global"),
+		Policy:     types.StringValue("BLOCKLIST"),
+	})
+	if got := req.GetRule().GetSeatbeltPolicy(); got != "" {
+		t.Errorf("seatbelt_policy should be unset, got %q", got)
+	}
+}
+
 func TestUpsertRuleCreateErrorReturnsNull(t *testing.T) {
 	fake := &fakeWorkshopClient{createErr: errors.New("boom")}
 	r := &RuleResource{client: fake}
@@ -208,31 +249,36 @@ func TestUpsertRuleCreateErrorReturnsNull(t *testing.T) {
 
 func TestValidateCELExpr(t *testing.T) {
 	cases := []struct {
-		name      string
-		policy    types.String
-		celExpr   types.String
-		validErr  error
-		wantCall  bool
-		wantError bool
+		name           string
+		policy         types.String
+		celExpr        types.String
+		seatbeltPolicy types.String
+		validErr       error
+		canSeatbelt    bool
+		wantCall       bool
+		wantError      bool
 	}{
-		{"valid CEL", types.StringValue("CEL"), types.StringValue("true"), nil, true, false},
-		{"invalid CEL", types.StringValue("CEL"), types.StringValue("bad("), status.Error(codes.InvalidArgument, "syntax error"), true, true},
-		{"non-CEL policy skips", types.StringValue("BLOCKLIST"), types.StringValue("true"), nil, false, false},
-		{"empty expr skips", types.StringValue("CEL"), types.StringValue(""), nil, false, false},
-		{"unknown expr skips", types.StringValue("CEL"), types.StringUnknown(), nil, false, false},
+		{"valid CEL", types.StringValue("CEL"), types.StringValue("true"), types.StringNull(), nil, false, true, false},
+		{"invalid CEL", types.StringValue("CEL"), types.StringValue("bad("), types.StringNull(), status.Error(codes.InvalidArgument, "syntax error"), false, true, true},
+		{"non-CEL policy skips", types.StringValue("BLOCKLIST"), types.StringValue("true"), types.StringNull(), nil, false, false, false},
+		{"empty expr skips", types.StringValue("CEL"), types.StringValue(""), types.StringNull(), nil, false, false, false},
+		{"unknown expr skips", types.StringValue("CEL"), types.StringUnknown(), types.StringNull(), nil, false, false, false},
+		{"seatbelt required when unset", types.StringValue("CEL"), types.StringValue("true"), types.StringNull(), nil, true, true, true},
+		{"seatbelt satisfied when set", types.StringValue("CEL"), types.StringValue("true"), types.StringValue("profile"), nil, true, true, false},
+		{"seatbelt unknown skips", types.StringValue("CEL"), types.StringValue("true"), types.StringUnknown(), nil, true, true, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			fake := &fakeWorkshopClient{validateCELErr: c.validErr}
+			fake := &fakeWorkshopClient{validateCELErr: c.validErr, validateCELSeatbelt: c.canSeatbelt}
 			r := &RuleResource{client: fake}
 
-			diags := r.validateCELExpr(context.Background(), c.policy, c.celExpr)
+			diags := r.validateCELExpr(context.Background(), c.policy, c.celExpr, c.seatbeltPolicy)
 			if diags.HasError() != c.wantError {
 				t.Errorf("HasError() = %v, want %v (%v)", diags.HasError(), c.wantError, diags)
 			}
-			// On error, only the status desc ("syntax error") should surface,
-			// not the full gRPC error string ("rpc error: code = ...").
-			if c.wantError && diags.HasError() {
+			// On a gRPC error, only the status desc ("syntax error") should
+			// surface, not the full gRPC error string ("rpc error: code = ...").
+			if c.validErr != nil && diags.HasError() {
 				if detail := diags.Errors()[0].Detail(); !strings.HasSuffix(detail, "syntax error") {
 					t.Errorf("detail = %q, want it to end with the bare desc", detail)
 				}

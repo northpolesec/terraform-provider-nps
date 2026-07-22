@@ -20,6 +20,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/northpolesec/terraform-provider-nps/internal/utils"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 
 	svcpb "buf.build/gen/go/northpolesec/workshop-api/grpc/go/workshop/v1/workshopv1grpc"
@@ -31,6 +32,7 @@ var _ resource.ResourceWithConfigure = &SyncSettingsResource{}
 var _ resource.ResourceWithImportState = &SyncSettingsResource{}
 var _ resource.ResourceWithIdentity = &SyncSettingsResource{}
 var _ resource.ResourceWithConfigValidators = &SyncSettingsResource{}
+var _ resource.ResourceWithModifyPlan = &SyncSettingsResource{}
 
 func NewSyncSettingsResource() resource.Resource {
 	return &SyncSettingsResource{}
@@ -59,6 +61,7 @@ type SyncSettingsResourceModel struct {
 
 	CelFallbackRule               []SyncSettingsCelFallbackRuleModel     `tfsdk:"cel_fallback_rule"`
 	OnDemandMonitorMode           *SyncSettingsOnDemandMonitorModeModel  `tfsdk:"on_demand_monitor_mode"`
+	OnDemandAdminMode             *SyncSettingsOnDemandAdminModeModel    `tfsdk:"on_demand_admin_mode"`
 	NetworkMount                  *SyncSettingsNetworkMountModel         `tfsdk:"network_mount"`
 	RemovableMediaPolicy          *SyncSettingsRemovableMediaPolicyModel `tfsdk:"removable_media_policy"`
 	EncryptedRemovableMediaPolicy *SyncSettingsRemovableMediaPolicyModel `tfsdk:"encrypted_removable_media_policy"`
@@ -74,6 +77,13 @@ type SyncSettingsOnDemandMonitorModeModel struct {
 	State                  types.String `tfsdk:"state"`
 	MaxMinutes             types.Int64  `tfsdk:"max_minutes"`
 	DefaultDurationMinutes types.Int64  `tfsdk:"default_duration_minutes"`
+}
+
+type SyncSettingsOnDemandAdminModeModel struct {
+	State                  types.String `tfsdk:"state"`
+	MaxMinutes             types.Int64  `tfsdk:"max_minutes"`
+	DefaultDurationMinutes types.Int64  `tfsdk:"default_duration_minutes"`
+	RequireJustification   types.Bool   `tfsdk:"require_justification"`
 }
 
 type SyncSettingsNetworkMountModel struct {
@@ -92,6 +102,10 @@ var (
 	syncSettingsOnDemandModeStateValues = []string{
 		"ON_DEMAND_MONITOR_MODE_STATE_ENABLED",
 		"ON_DEMAND_MONITOR_MODE_STATE_DISABLED",
+	}
+	syncSettingsOnDemandAdminModeStateValues = []string{
+		"ON_DEMAND_ADMIN_MODE_STATE_ENABLED",
+		"ON_DEMAND_ADMIN_MODE_STATE_DISABLED",
 	}
 	syncSettingsNetworkMountBlockMountValues = []string{
 		"BLOCK_MOUNT_ENABLED",
@@ -242,6 +256,41 @@ func (r *SyncSettingsResource) Schema(ctx context.Context, req resource.SchemaRe
 					},
 				},
 			},
+			"on_demand_admin_mode": schema.SingleNestedBlock{
+				Description:         "On-demand admin mode settings, allowing users to elevate to administrator for a bounded time.",
+				MarkdownDescription: "On-demand admin mode settings, allowing users to elevate to administrator for a bounded time.",
+				Attributes: map[string]schema.Attribute{
+					"state": schema.StringAttribute{
+						Description:         "Whether on-demand admin mode is enabled. One of: ON_DEMAND_ADMIN_MODE_STATE_ENABLED, ON_DEMAND_ADMIN_MODE_STATE_DISABLED. Must be set whenever the on_demand_admin_mode block is present.",
+						MarkdownDescription: "Whether on-demand admin mode is enabled. One of: `ON_DEMAND_ADMIN_MODE_STATE_ENABLED`, `ON_DEMAND_ADMIN_MODE_STATE_DISABLED`. Must be set whenever the `on_demand_admin_mode` block is present.",
+						Optional:            true,
+						Validators: []validator.String{
+							stringvalidator.OneOf(syncSettingsOnDemandAdminModeStateValues...),
+						},
+					},
+					"max_minutes": schema.Int64Attribute{
+						Description:         "Maximum number of minutes a user may be elevated to administrator. Required when state is ENABLED.",
+						MarkdownDescription: "Maximum number of minutes a user may be elevated to administrator. Required when `state` is `ENABLED`.",
+						Optional:            true,
+						Validators: []validator.Int64{
+							int64validator.Between(1, 60*24*30),
+						},
+					},
+					"default_duration_minutes": schema.Int64Attribute{
+						Description:         "Default elevation duration when the user requests admin without specifying one. Must not exceed max_minutes. Omit (rather than set 0) to fall back to max_minutes as the default.",
+						MarkdownDescription: "Default elevation duration when the user requests admin without specifying one. Must not exceed `max_minutes`. Omit (rather than set `0`) to fall back to `max_minutes` as the default.",
+						Optional:            true,
+						Validators: []validator.Int64{
+							int64validator.AtLeast(1),
+						},
+					},
+					"require_justification": schema.BoolAttribute{
+						Description:         "Whether the user must supply a free-text justification to elevate.",
+						MarkdownDescription: "Whether the user must supply a free-text justification to elevate.",
+						Optional:            true,
+					},
+				},
+			},
 			"network_mount": schema.SingleNestedBlock{
 				Description:         "Network mount handling settings.",
 				MarkdownDescription: "Network mount handling settings.",
@@ -343,6 +392,39 @@ func (r *SyncSettingsResource) ConfigValidators(ctx context.Context) []resource.
 				)
 			}
 		}),
+		utils.ConfigValidatorFunc("Validate on_demand_admin_mode", func(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
+			var data SyncSettingsResourceModel
+			resp.Diagnostics.Append(req.Config.Get(ctx, &data)...)
+			if resp.Diagnostics.HasError() {
+				return
+			}
+			odam := data.OnDemandAdminMode
+			if odam == nil {
+				return
+			}
+			if odam.State.IsNull() {
+				resp.Diagnostics.AddAttributeError(
+					path.Root("on_demand_admin_mode").AtName("state"),
+					"state is required",
+					"state must be set when the on_demand_admin_mode block is present",
+				)
+			}
+			if odam.State.ValueString() == "ON_DEMAND_ADMIN_MODE_STATE_ENABLED" && odam.MaxMinutes.IsNull() {
+				resp.Diagnostics.AddAttributeError(
+					path.Root("on_demand_admin_mode").AtName("max_minutes"),
+					"max_minutes is required",
+					"max_minutes must be set when state is ON_DEMAND_ADMIN_MODE_STATE_ENABLED",
+				)
+			}
+			if !odam.MaxMinutes.IsNull() && !odam.DefaultDurationMinutes.IsNull() &&
+				odam.DefaultDurationMinutes.ValueInt64() > odam.MaxMinutes.ValueInt64() {
+				resp.Diagnostics.AddAttributeError(
+					path.Root("on_demand_admin_mode").AtName("default_duration_minutes"),
+					"default_duration_minutes exceeds max_minutes",
+					"default_duration_minutes must not exceed max_minutes",
+				)
+			}
+		}),
 	}
 }
 
@@ -374,6 +456,22 @@ func validateRemovablePolicyBlock(p path.Path, m *SyncSettingsRemovableMediaPoli
 			"remount_flags must not be set unless action is REMOUNT",
 		)
 	}
+}
+
+func (r *SyncSettingsResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	// No plan to validate on destroy, and the client may be unset if the
+	// provider isn't fully configured (e.g. during validate).
+	if req.Plan.Raw.IsNull() || r.client == nil {
+		return
+	}
+
+	var data SyncSettingsResourceModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	r.validateCelFallbackRules(ctx, data.CelFallbackRule, &resp.Diagnostics)
 }
 
 func (r *SyncSettingsResource) Configure(ctx context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
@@ -523,6 +621,14 @@ func (r *SyncSettingsResource) IdentitySchema(ctx context.Context, req resource.
 // be deleted, so that tenants not using telemetry are never forced to call the
 // (feature-gated) telemetry RPCs.
 func (r *SyncSettingsResource) replaceTagSettings(ctx context.Context, data *SyncSettingsResourceModel, priorTelemetryEnabled types.Bool, diags *diag.Diagnostics) bool {
+	// Validate CEL fallback expressions server-side before the destructive
+	// delete/update below, so an invalid expression fails without clearing the
+	// tag's existing settings.
+	r.validateCelFallbackRules(ctx, data.CelFallbackRule, diags)
+	if diags.HasError() {
+		return false
+	}
+
 	ss, d := syncSettingsModelToProto(ctx, data)
 	diags.Append(d...)
 	if diags.HasError() {
@@ -546,6 +652,31 @@ func (r *SyncSettingsResource) replaceTagSettings(ctx context.Context, data *Syn
 	}
 
 	return r.applyTelemetryConfig(ctx, data.Tag.ValueString(), data.TelemetryEnabled, priorTelemetryEnabled, diags)
+}
+
+// validateCelFallbackRules asks the server to validate each fallback rule's CEL
+// expression. Expressions that are unknown (interpolated from another resource
+// at plan time) or empty are skipped; the schema already requires a non-empty
+// expression, so an empty value here can only be an unresolved reference.
+func (r *SyncSettingsResource) validateCelFallbackRules(ctx context.Context, rules []SyncSettingsCelFallbackRuleModel, diags *diag.Diagnostics) {
+	for i, rule := range rules {
+		if rule.Expression.IsUnknown() || rule.Expression.ValueString() == "" {
+			continue
+		}
+		if _, err := r.client.ValidateCELRule(ctx, apipb.ValidateCELRuleRequest_builder{
+			Expression: proto.String(rule.Expression.ValueString()),
+		}.Build()); err != nil {
+			msg := err.Error()
+			if st, ok := status.FromError(err); ok {
+				msg = st.Message()
+			}
+			diags.AddAttributeError(
+				path.Root("cel_fallback_rule").AtListIndex(i).AtName("expression"),
+				"Invalid CEL expression",
+				fmt.Sprintf("The CEL fallback expression failed validation: %s", msg),
+			)
+		}
+	}
 }
 
 // applyTelemetryConfig reconciles the tag's TelemetryConfig with the plan.
@@ -681,6 +812,22 @@ func syncSettingsModelToProto(ctx context.Context, m *SyncSettingsResourceModel)
 		b.OnDemandMonitorMode = odmmB.Build()
 	}
 
+	if m.OnDemandAdminMode != nil {
+		odamB := apipb.OnDemandAdminMode_builder{
+			State: apipb.OnDemandAdminMode_OnDemandAdminModeState(
+				apipb.OnDemandAdminMode_OnDemandAdminModeState_value[m.OnDemandAdminMode.State.ValueString()],
+			),
+			RequireJustification: m.OnDemandAdminMode.RequireJustification.ValueBool(),
+		}
+		if !m.OnDemandAdminMode.MaxMinutes.IsNull() && !m.OnDemandAdminMode.MaxMinutes.IsUnknown() {
+			odamB.MaxMinutes = uint32(m.OnDemandAdminMode.MaxMinutes.ValueInt64())
+		}
+		if !m.OnDemandAdminMode.DefaultDurationMinutes.IsNull() && !m.OnDemandAdminMode.DefaultDurationMinutes.IsUnknown() {
+			odamB.DefaultDurationMinutes = uint32(m.OnDemandAdminMode.DefaultDurationMinutes.ValueInt64())
+		}
+		b.OnDemandAdminMode = odamB.Build()
+	}
+
 	if m.NetworkMount != nil {
 		nmB := apipb.SyncSettings_NetworkMount_builder{
 			BannedMessage: tfStringToPtr(m.NetworkMount.BannedMessage),
@@ -807,6 +954,17 @@ func syncSettingsProtoToModel(ctx context.Context, ss *apipb.SyncSettings) (Sync
 			State:                  types.StringValue(odmm.GetState().String()),
 			MaxMinutes:             zeroUint32ToNullInt64(odmm.GetMaxMinutes()),
 			DefaultDurationMinutes: zeroUint32ToNullInt64(odmm.GetDefaultDurationMinutes()),
+		}
+	}
+
+	if odam := ss.GetOnDemandAdminMode(); odam != nil {
+		m.OnDemandAdminMode = &SyncSettingsOnDemandAdminModeModel{
+			State:                  types.StringValue(odam.GetState().String()),
+			MaxMinutes:             zeroUint32ToNullInt64(odam.GetMaxMinutes()),
+			DefaultDurationMinutes: zeroUint32ToNullInt64(odam.GetDefaultDurationMinutes()),
+			// require_justification has no proto presence; reflect it directly so an
+			// explicit false round-trips instead of drifting to null.
+			RequireJustification: types.BoolValue(odam.GetRequireJustification()),
 		}
 	}
 

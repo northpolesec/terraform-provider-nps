@@ -9,11 +9,13 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/list"
 	"github.com/hashicorp/terraform-plugin-framework/provider"
 	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/northpolesec/terraform-provider-nps/internal/auth"
 	"google.golang.org/grpc"
@@ -37,12 +39,23 @@ type NPSProvider struct {
 
 // NPSProviderModel describes the provider data model.
 type NPSProviderModel struct {
-	Endpoint types.String `tfsdk:"endpoint"`
-	APIKey   types.String `tfsdk:"api_key"`
+	Endpoint        types.String `tfsdk:"endpoint"`
+	APIKey          types.String `tfsdk:"api_key"`
+	TagOrderMaxSize types.Int64  `tfsdk:"tag_order_max_size"`
 }
 
 type NPSProviderResourceData struct {
-	Client apipb.WorkshopServiceClient
+	Client          apipb.WorkshopServiceClient
+	TagOrderMaxSize int64
+}
+
+const defaultTagOrderMaxSize int64 = 25
+
+func configuredTagOrderMaxSize(value types.Int64) int64 {
+	if value.IsNull() || value.IsUnknown() {
+		return defaultTagOrderMaxSize
+	}
+	return value.ValueInt64()
 }
 
 func (p *NPSProvider) Metadata(ctx context.Context, req provider.MetadataRequest, resp *provider.MetadataResponse) {
@@ -61,6 +74,13 @@ func (p *NPSProvider) Schema(ctx context.Context, req provider.SchemaRequest, re
 				MarkdownDescription: "The API key to use. Can also be supplied using the `WORKSHOP_API_KEY` environment variable. If no API key is provided, the provider will attempt to use a stored short-lived user token.",
 				Optional:            true,
 				Sensitive:           true,
+			},
+			"tag_order_max_size": schema.Int64Attribute{
+				MarkdownDescription: "Maximum number of tags accepted by `nps_workshop_tag_order`. Defaults to `25`; set this only when the Workshop tenant is configured with a different limit.",
+				Optional:            true,
+				Validators: []validator.Int64{
+					int64validator.AtLeast(1),
+				},
 			},
 		},
 	}
@@ -129,7 +149,8 @@ func (p *NPSProvider) Configure(ctx context.Context, req provider.ConfigureReque
 	client := apipb.NewWorkshopServiceClient(conn)
 
 	providerData := &NPSProviderResourceData{
-		Client: client,
+		Client:          client,
+		TagOrderMaxSize: configuredTagOrderMaxSize(data.TagOrderMaxSize),
 	}
 
 	resp.DataSourceData = client
@@ -140,6 +161,7 @@ func (p *NPSProvider) Configure(ctx context.Context, req provider.ConfigureReque
 func (p *NPSProvider) Resources(ctx context.Context) []func() resource.Resource {
 	return []func() resource.Resource{
 		NewAPIKeyResource,
+		NewAPIKeyCIDRSettingsResource,
 		NewAutoUpdateSettingsResource,
 		NewChatSettingsResource,
 		NewDirectorySettingsResource,
@@ -156,6 +178,7 @@ func (p *NPSProvider) Resources(ctx context.Context) []func() resource.Resource 
 		NewSyncSettingsResource,
 		NewTagResource,
 		NewTagOrderResource,
+		NewWebhookSettingsResource,
 	}
 }
 
