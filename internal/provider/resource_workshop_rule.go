@@ -582,7 +582,18 @@ func (r *RuleResource) ListResourceConfigSchema(ctx context.Context, req list.Li
 
 func (r *RuleResource) List(ctx context.Context, req list.ListRequest, stream *list.ListResultsStream) {
 	stream.Results = func(push func(list.ListResult) bool) {
-		ret, err := r.client.ListRules(ctx, apipb.ListRulesRequest_builder{}.Build())
+		rules, err := collectPages(func(page int) ([]*apipb.Rule, bool, error) {
+			ret, err := r.client.ListRules(ctx, apipb.ListRulesRequest_builder{
+				PageSize: proto.Int32(int32(listPageSize)),
+				Page:     proto.Int32(int32(page)),
+			}.Build())
+			if err != nil {
+				return nil, false, err
+			}
+			return ret.GetRules(), ret.GetMore(), nil
+		}, func(rule *apipb.Rule) string {
+			return rule.GetRuleId()
+		})
 		if err != nil {
 			result := req.NewListResult(ctx)
 			result.Diagnostics.AddError("Client Error", "Failed to list rules: "+err.Error())
@@ -590,7 +601,7 @@ func (r *RuleResource) List(ctx context.Context, req list.ListRequest, stream *l
 			return
 		}
 
-		for _, rule := range ret.GetRules() {
+		for _, rule := range rules {
 			result := req.NewListResult(ctx)
 			result.DisplayName = fmt.Sprintf("%s %s", rule.GetRuleType().String(), rule.GetIdentifier())
 

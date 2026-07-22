@@ -349,7 +349,18 @@ func (r *SignalResource) ListResourceConfigSchema(ctx context.Context, req list.
 
 func (r *SignalResource) List(ctx context.Context, req list.ListRequest, stream *list.ListResultsStream) {
 	stream.Results = func(push func(list.ListResult) bool) {
-		ret, err := r.client.ListSignals(ctx, apipb.ListSignalsRequest_builder{}.Build())
+		signals, err := collectPages(func(page int) ([]*apipb.Signal, bool, error) {
+			ret, err := r.client.ListSignals(ctx, apipb.ListSignalsRequest_builder{
+				PageSize: proto.Uint32(listPageSize),
+				Page:     proto.Uint32(uint32(page)),
+			}.Build())
+			if err != nil {
+				return nil, false, err
+			}
+			return ret.GetSignals(), ret.GetMore(), nil
+		}, func(signal *apipb.Signal) string {
+			return fmt.Sprintf("%d:%s%s", len(signal.GetTag()), signal.GetTag(), signal.GetName())
+		})
 		if err != nil {
 			result := req.NewListResult(ctx)
 			result.Diagnostics.AddError("Client Error", "Failed to list signals: "+err.Error())
@@ -357,7 +368,7 @@ func (r *SignalResource) List(ctx context.Context, req list.ListRequest, stream 
 			return
 		}
 
-		for _, signal := range ret.GetSignals() {
+		for _, signal := range signals {
 			result := req.NewListResult(ctx)
 			result.DisplayName = signal.GetName()
 

@@ -66,6 +66,16 @@ type groupRef struct {
 	value string
 }
 
+func listGroupsPage(ret *apipb.ListGroupsResponse) ([]*apipb.Group, bool) {
+	groups := ret.GetGroups()
+	return groups, pageHasMore(len(groups), ret.GetMore())
+}
+
+func listTagsPage(ret *apipb.ListTagsResponse) ([]*apipb.TagStats, bool) {
+	tags := ret.GetTags()
+	return tags, pageHasMore(len(tags), ret.GetMore())
+}
+
 // resolvedGroupRef pairs a user-supplied group reference with the resolved
 // group object.
 type resolvedGroupRef struct {
@@ -148,9 +158,20 @@ func modelGroupRefs(ctx context.Context, data TagResourceModel, diags *diag.Diag
 // errGroupNotFound if no group matches, and an error if more than one does.
 func (r *TagResource) resolveGroup(ctx context.Context, ref groupRef) (*apipb.Group, error) {
 	filter := fmt.Sprintf("%s = %q", ref.field, ref.value)
-	ret, err := r.client.ListGroups(ctx, apipb.ListGroupsRequest_builder{
-		Filter: proto.String(filter),
-	}.Build())
+	groups, err := collectPages(func(page int) ([]*apipb.Group, bool, error) {
+		ret, err := r.client.ListGroups(ctx, apipb.ListGroupsRequest_builder{
+			Filter:   proto.String(filter),
+			PageSize: proto.Int32(int32(listPageSize)),
+			Page:     proto.Int32(int32(page)),
+		}.Build())
+		if err != nil {
+			return nil, false, err
+		}
+		groups, more := listGroupsPage(ret)
+		return groups, more, nil
+	}, func(group *apipb.Group) string {
+		return group.GetId()
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list groups with filter %q: %w", filter, err)
 	}
@@ -158,7 +179,7 @@ func (r *TagResource) resolveGroup(ctx context.Context, ref groupRef) (*apipb.Gr
 	// Filter to exact matches defensively, in case the server treats the
 	// filter as a substring or case-insensitive match.
 	var matches []*apipb.Group
-	for _, g := range ret.GetGroups() {
+	for _, g := range groups {
 		switch ref.field {
 		case "name":
 			if g.GetName() == ref.value {
@@ -494,7 +515,19 @@ func (r *TagResource) ListResourceConfigSchema(ctx context.Context, req list.Lis
 
 func (r *TagResource) List(ctx context.Context, req list.ListRequest, stream *list.ListResultsStream) {
 	stream.Results = func(push func(list.ListResult) bool) {
-		ret, err := r.client.ListTags(ctx, apipb.ListTagsRequest_builder{}.Build())
+		tags, err := collectPages(func(page int) ([]*apipb.TagStats, bool, error) {
+			ret, err := r.client.ListTags(ctx, apipb.ListTagsRequest_builder{
+				PageSize: proto.Uint32(uint32(listPageSize)),
+				Page:     proto.Uint32(uint32(page)),
+			}.Build())
+			if err != nil {
+				return nil, false, err
+			}
+			tags, more := listTagsPage(ret)
+			return tags, more, nil
+		}, func(tag *apipb.TagStats) string {
+			return tag.GetTag()
+		})
 		if err != nil {
 			result := req.NewListResult(ctx)
 			result.Diagnostics.AddError("Client Error", "Failed to list tags: "+err.Error())
@@ -502,7 +535,7 @@ func (r *TagResource) List(ctx context.Context, req list.ListRequest, stream *li
 			return
 		}
 
-		for _, tagStats := range ret.GetTags() {
+		for _, tagStats := range tags {
 			tagName := tagStats.GetTag()
 			result := req.NewListResult(ctx)
 			result.DisplayName = tagName
