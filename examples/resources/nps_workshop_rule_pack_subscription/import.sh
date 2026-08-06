@@ -1,0 +1,1 @@
+terraform import nps_workshop_rule_pack_subscription.cryptojacking 42
