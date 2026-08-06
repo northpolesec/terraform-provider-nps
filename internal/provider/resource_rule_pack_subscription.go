@@ -580,7 +580,20 @@ func (r *RulePackSubscriptionResource) ListResourceConfigSchema(ctx context.Cont
 
 func (r *RulePackSubscriptionResource) List(ctx context.Context, req list.ListRequest, stream *list.ListResultsStream) {
 	stream.Results = func(push func(list.ListResult) bool) {
-		ret, err := r.client.ListRulePackSubscriptions(ctx, apipb.ListRulePackSubscriptionsRequest_builder{}.Build())
+		subs, err := collectPages(func(page int) ([]*apipb.RulePackSubscription, bool, error) {
+			ret, err := r.client.ListRulePackSubscriptions(ctx, apipb.ListRulePackSubscriptionsRequest_builder{
+				PageSize: proto.Uint32(listPageSize),
+				Page:     proto.Uint32(uint32(page)),
+			}.Build())
+			if err != nil {
+				return nil, false, err
+			}
+			return ret.GetSubscriptions(), ret.GetMore(), nil
+		}, func(sub *apipb.RulePackSubscription) string {
+			// The Workshop-local subscription ID is this resource's identity, so
+			// it is already stable and unique on its own.
+			return strconv.FormatInt(sub.GetId(), 10)
+		})
 		if err != nil {
 			result := req.NewListResult(ctx)
 			result.Diagnostics.AddError("Client Error", "Failed to list rule pack subscriptions: "+err.Error())
@@ -588,7 +601,7 @@ func (r *RulePackSubscriptionResource) List(ctx context.Context, req list.ListRe
 			return
 		}
 
-		for _, sub := range ret.GetSubscriptions() {
+		for _, sub := range subs {
 			result := req.NewListResult(ctx)
 			result.DisplayName = sub.GetTitle()
 
