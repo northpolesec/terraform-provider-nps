@@ -5,10 +5,15 @@ resource "nps_workshop_rule_pack_subscription" "cryptojacking" {
   rule_pack_title = "Block Cryptojacking"
   tags            = ["production", "canary"]
 
-  # Optional. Set this to the subscription's latest_commit_sha once you have
-  # reviewed that version of the pack, and Terraform will apply the update.
-  # Leave it out and Terraform never changes the materialized version.
-  commit_sha = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"
+  # Optional, and left unset here so this example applies as-is: with no
+  # commit_sha, Terraform never changes the materialized pack version. To adopt
+  # an update, read the subscription's latest_commit_sha, review that version of
+  # the pack, then pin the SHA you reviewed:
+  #
+  #   commit_sha = "d63f5160cd000d388dee57bed9edbb120d8e0e16"
+  #
+  # It must be the currently published version; an older SHA is rejected rather
+  # than silently downgraded.
 }
 
 # Naming the pack by UUID avoids a catalog lookup at plan time.
