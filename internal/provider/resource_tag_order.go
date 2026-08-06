@@ -7,6 +7,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/identityschema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -22,14 +23,16 @@ var _ resource.Resource = &TagOrderResource{}
 var _ resource.ResourceWithConfigure = &TagOrderResource{}
 var _ resource.ResourceWithImportState = &TagOrderResource{}
 var _ resource.ResourceWithIdentity = &TagOrderResource{}
+var _ resource.ResourceWithModifyPlan = &TagOrderResource{}
 
 func NewTagOrderResource() resource.Resource {
-	return &TagOrderResource{}
+	return &TagOrderResource{maxSize: defaultTagOrderMaxSize}
 }
 
 // TagOrderResource manages the global, ordered list of enabled tags.
 type TagOrderResource struct {
-	client svcpb.WorkshopServiceClient
+	client  svcpb.WorkshopServiceClient
+	maxSize int64
 }
 
 type TagOrderIdentityModel struct {
@@ -78,10 +81,48 @@ func (r *TagOrderResource) Configure(ctx context.Context, req resource.Configure
 	}
 
 	r.client = pd.Client
+	r.maxSize = pd.TagOrderMaxSize
+}
+
+func (r *TagOrderResource) effectiveMaxSize() int64 {
+	if r.maxSize < 1 {
+		return defaultTagOrderMaxSize
+	}
+	return r.maxSize
+}
+
+func validateTagOrderSize(tags types.List, maxSize int64, diags *diag.Diagnostics) {
+	if tags.IsNull() || tags.IsUnknown() {
+		return
+	}
+	if got := int64(len(tags.Elements())); got > maxSize {
+		diags.AddAttributeError(
+			path.Root("tags"),
+			"Tag order exceeds configured maximum",
+			fmt.Sprintf("The tag order contains %d tags, but the provider's tag_order_max_size is %d.", got, maxSize),
+		)
+	}
+}
+
+func (r *TagOrderResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	if req.Plan.Raw.IsNull() {
+		return
+	}
+
+	var data TagOrderResourceModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	validateTagOrderSize(data.Tags, r.effectiveMaxSize(), &resp.Diagnostics)
 }
 
 // updateOrder pushes the ordered tag list from data to the server.
 func (r *TagOrderResource) updateOrder(ctx context.Context, data TagOrderResourceModel, diags *diag.Diagnostics) {
+	validateTagOrderSize(data.Tags, r.effectiveMaxSize(), diags)
+	if diags.HasError() {
+		return
+	}
 	var tags []string
 	diags.Append(data.Tags.ElementsAs(ctx, &tags, false)...)
 	if diags.HasError() {

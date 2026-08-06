@@ -65,7 +65,7 @@ resource "nps_workshop_rule" "yes" {
 ### Required
 
 - `identifier` (String) The identifier for this rule. The format of this identifier depends on the rule type.
-- `policy` (String) The policy for this rule. The possible values are: `ALLOWLIST`, `ALLOWLIST_COMPILER`, `BLOCKLIST`, `SILENT_BLOCKLIST`, and `CEL`.
+- `policy` (String) The policy for this rule. The possible values are: `ALLOWLIST`, `ALLOWLIST_COMPILER`, `BLOCKLIST`, `SILENT_BLOCKLIST`, `CEL`, and `SEATBELT`.
 - `rule_type` (String) The type of this rule. The possible values are: `BINARY`, `CERTIFICATE`, `TEAMID`, `SIGNINGID`, and `CDHASH`.
 - `tag` (String) The tag for this rule. The tag determines which hosts this rule will apply to. The tag must already exist in Workshop.
 
@@ -77,6 +77,7 @@ resource "nps_workshop_rule" "yes" {
 - `comment` (String) A comment to add to this rule. Will be displayed in the Workshop UI.
 - `custom_msg` (String) A custom message to display to the user when this rule causes Santa to block the execution.
 - `custom_url` (String) A custom URL to redirect the user to when this rule causes Santa to block the execution. Setting a custom URL will override the `EventDetailURL` used by the Open button.
+- `seatbelt_policy` (String) The seatbelt policy to apply when running the targeted process under `santactl sandbox`. Required when the policy is set to `SEATBELT`, or when the policy is `CEL` and the CEL expression can return `SEATBELT`.
 
 ### Read-Only
 

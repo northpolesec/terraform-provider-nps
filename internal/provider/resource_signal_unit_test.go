@@ -11,6 +11,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	commonpb "buf.build/gen/go/northpolesec/protos/protocolbuffers/go/common"
 	svcpb "buf.build/gen/go/northpolesec/workshop-api/grpc/go/workshop/v1/workshopv1grpc"
@@ -81,6 +83,7 @@ type fakeSignalClient struct {
 	svcpb.WorkshopServiceClient
 
 	upsertErr error
+	deleteErr error
 
 	upserted      bool
 	deleteCalls   int
@@ -98,6 +101,9 @@ func (f *fakeSignalClient) UpsertSignal(ctx context.Context, in *apipb.UpsertSig
 
 func (f *fakeSignalClient) DeleteSignal(ctx context.Context, in *apipb.DeleteSignalRequest, _ ...grpc.CallOption) (*apipb.DeleteSignalResponse, error) {
 	f.deleteCalls++
+	if f.deleteErr != nil {
+		return nil, f.deleteErr
+	}
 	return apipb.DeleteSignalResponse_builder{}.Build(), nil
 }
 
@@ -134,6 +140,47 @@ func callSignalUpdate(t *testing.T, r *SignalResource, model SignalResourceModel
 	}
 	r.Update(ctx, req, resp)
 	return resp
+}
+
+func callSignalDelete(t *testing.T, r *SignalResource, model SignalResourceModel) *resource.DeleteResponse {
+	t.Helper()
+	ctx := context.Background()
+
+	var sResp resource.SchemaResponse
+	r.Schema(ctx, resource.SchemaRequest{}, &sResp)
+	req := resource.DeleteRequest{State: tfsdk.State{Schema: sResp.Schema}}
+	if diags := req.State.Set(ctx, model); diags.HasError() {
+		t.Fatalf("failed to build state: %v", diags)
+	}
+	resp := &resource.DeleteResponse{}
+	r.Delete(ctx, req, resp)
+	return resp
+}
+
+func TestSignalDeleteTreatsNotFoundAsSuccess(t *testing.T) {
+	fake := &fakeSignalClient{deleteErr: status.Error(codes.NotFound, "gone")}
+	r := &SignalResource{client: fake}
+
+	resp := callSignalDelete(t, r, testSignalModel())
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("NotFound should be an idempotent delete: %v", resp.Diagnostics)
+	}
+	if fake.deleteCalls != 1 {
+		t.Fatalf("DeleteSignal calls = %d, want 1", fake.deleteCalls)
+	}
+}
+
+func TestSignalDeleteDoesNotIgnoreSupersededRuleError(t *testing.T) {
+	fake := &fakeSignalClient{deleteErr: status.Error(codes.InvalidArgument, "rule is superseded")}
+	r := &SignalResource{client: fake}
+
+	resp := callSignalDelete(t, r, testSignalModel())
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("signal delete must not ignore a rule-ID-specific superseded error")
+	}
+	if fake.deleteCalls != 1 {
+		t.Fatalf("DeleteSignal calls = %d, want 1", fake.deleteCalls)
+	}
 }
 
 // TestSignalUpdateUpsertsAndNeverDeletes verifies an in-place update upserts and

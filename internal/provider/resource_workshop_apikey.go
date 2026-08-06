@@ -220,7 +220,7 @@ func (r *APIKeyResource) Delete(ctx context.Context, req resource.DeleteRequest,
 	_, err := r.client.DeleteAPIKey(ctx, apipb.DeleteAPIKeyRequest_builder{
 		Name: proto.String(data.Name.ValueString()),
 	}.Build())
-	if err != nil {
+	if err != nil && !isDeleteNoOp(err) {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Failed to delete API key: %v", err))
 		return
 	}

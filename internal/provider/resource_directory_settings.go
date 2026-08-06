@@ -66,8 +66,8 @@ func (r *DirectorySettingsResource) Metadata(ctx context.Context, req resource.M
 
 func (r *DirectorySettingsResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description:         "The nps_workshop_directory_settings resource manages directory settings for Workshop. This is a singleton resource — one per tenant.",
-		MarkdownDescription: "The `nps_workshop_directory_settings` resource manages directory settings for Workshop. This is a singleton resource — one per tenant.",
+		Description:         "The nps_workshop_directory_settings resource manages directory settings for Workshop. This is a singleton resource — one per tenant. Destroy removes it from Terraform state without changing Workshop.",
+		MarkdownDescription: "The `nps_workshop_directory_settings` resource manages directory settings for Workshop. This is a singleton resource — one per tenant. Destroy removes it from Terraform state without changing Workshop.",
 
 		Attributes: map[string]schema.Attribute{
 			"directory_type": schema.StringAttribute{
@@ -227,20 +227,10 @@ func (r *DirectorySettingsResource) Update(ctx context.Context, req resource.Upd
 }
 
 func (r *DirectorySettingsResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
-	// Singleton: reset to LOCAL with no group filter
-	dirType := apipb.DirectoryType_DIRECTORY_TYPE_LOCAL
-
-	updateReq := apipb.UpdateDirectorySettingsRequest_builder{
-		Type: dirType.Enum(),
-	}.Build()
-
-	_, err := r.client.UpdateDirectorySettings(ctx, updateReq)
-	if err != nil {
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Failed to reset directory settings: %v", err))
-		return
-	}
-
-	tflog.Info(ctx, "Deleted (reset) directory settings resource")
+	// Singleton settings always exist server-side. Destroying this resource is
+	// therefore state-only; resetting it to LOCAL would be a destructive and
+	// surprising tenant-wide configuration change.
+	tflog.Info(ctx, "Removed directory settings from Terraform state (server-side settings unchanged)")
 }
 
 func (r *DirectorySettingsResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {

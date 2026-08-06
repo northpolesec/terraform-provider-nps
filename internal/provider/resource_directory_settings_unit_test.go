@@ -7,10 +7,20 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	apipb "buf.build/gen/go/northpolesec/workshop-api/protocolbuffers/go/workshop/v1"
 )
+
+func TestDirectorySettingsDeleteIsStateOnly(t *testing.T) {
+	var resp resource.DeleteResponse
+	(&DirectorySettingsResource{}).Delete(context.Background(), resource.DeleteRequest{}, &resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("state-only delete returned diagnostics: %v", resp.Diagnostics)
+	}
+}
 
 func TestGroupsModelToProto_NullList(t *testing.T) {
 	ctx := context.Background()

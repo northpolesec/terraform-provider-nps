@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/durationpb"
@@ -179,5 +180,61 @@ func TestRiskEngineRoundtrip(t *testing.T) {
 	}
 	if len(rp[0].GetHeaders()) != 1 || rp[0].GetHeaders()[0].GetKey() != "X-Tenant" {
 		t.Errorf("unexpected headers after roundtrip: %v", rp[0].GetHeaders())
+	}
+}
+
+func TestAPIKeyCIDRProtoToModel(t *testing.T) {
+	ctx := context.Background()
+
+	s := apipb.APIKeyCIDRSettings_builder{
+		Enabled:      true,
+		AllowedCidrs: []string{"10.0.0.0/8", "192.168.1.0/24"},
+	}.Build()
+	got, diags := apikeyCIDRProtoToModel(ctx, s)
+	if diags.HasError() {
+		t.Fatalf("unexpected diagnostics: %v", diags)
+	}
+	if !got.Enabled.ValueBool() {
+		t.Errorf("expected enabled=true")
+	}
+	var cidrs []string
+	got.AllowedCidrs.ElementsAs(ctx, &cidrs, false)
+	if len(cidrs) != 2 || cidrs[0] != "10.0.0.0/8" {
+		t.Errorf("unexpected allowed_cidrs: %v", cidrs)
+	}
+
+	// Empty allowlist maps to null, not an empty list, to avoid perpetual diffs.
+	empty, _ := apikeyCIDRProtoToModel(ctx, apipb.APIKeyCIDRSettings_builder{}.Build())
+	if !empty.AllowedCidrs.IsNull() {
+		t.Errorf("expected null allowed_cidrs for empty settings, got %v", empty.AllowedCidrs)
+	}
+
+	// nil settings.
+	nilModel, _ := apikeyCIDRProtoToModel(ctx, nil)
+	if !nilModel.AllowedCidrs.IsNull() {
+		t.Errorf("expected null allowed_cidrs for nil settings")
+	}
+}
+
+func TestCIDRValidator(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		val     string
+		wantErr bool
+	}{
+		{"10.0.0.0/8", false},
+		{"192.168.1.0/24", false},
+		{"2001:db8::/32", false},
+		{"10.0.0.0", true},    // missing prefix
+		{"10.0.0.0/33", true}, // invalid prefix length
+		{"not-a-cidr", true},
+	} {
+		resp := &validator.StringResponse{}
+		cidrValidator{}.ValidateString(ctx, validator.StringRequest{
+			ConfigValue: types.StringValue(tc.val),
+		}, resp)
+		if got := resp.Diagnostics.HasError(); got != tc.wantErr {
+			t.Errorf("%q: got error=%v, want error=%v", tc.val, got, tc.wantErr)
+		}
 	}
 }

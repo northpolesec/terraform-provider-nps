@@ -294,7 +294,7 @@ func (r *SignalResource) Delete(ctx context.Context, req resource.DeleteRequest,
 		Name: proto.String(data.Name.ValueString()),
 		Tag:  proto.String(data.Tag.ValueString()),
 	}.Build())
-	if err != nil {
+	if err != nil && !isDeleteNoOp(err) {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Failed to delete signal: %v", err))
 		return
 	}

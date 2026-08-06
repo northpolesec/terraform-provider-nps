@@ -101,5 +101,5 @@ Optional:
 Import is supported using the following syntax:
 
 ```shell
-terraform import nps_workshop_network_flow_rule.example 12345
+terraform import nps_workshop_network_flow_rule.block_spacemolt 12345
 ```
