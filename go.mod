@@ -3,18 +3,18 @@ module github.com/northpolesec/terraform-provider-nps
 go 1.25.8
 
 require (
-	buf.build/gen/go/northpolesec/protos/protocolbuffers/go v1.36.11-20260721180550-e61e39a61420.1
-	buf.build/gen/go/northpolesec/workshop-api/grpc/go v1.6.2-20260722001533-267f2dfde5c0.1
-	buf.build/gen/go/northpolesec/workshop-api/protocolbuffers/go v1.36.11-20260722001533-267f2dfde5c0.1
+	buf.build/gen/go/northpolesec/protos/protocolbuffers/go v1.36.11-20260731214504-f26c15370a21.1
+	buf.build/gen/go/northpolesec/workshop-api/grpc/go v1.6.2-20260803221029-1eeb75303dd4.1
+	buf.build/gen/go/northpolesec/workshop-api/protocolbuffers/go v1.36.11-20260803221029-1eeb75303dd4.1
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/hashicorp/terraform-plugin-framework v1.19.0
 	github.com/hashicorp/terraform-plugin-framework-validators v0.19.0
 	github.com/hashicorp/terraform-plugin-go v0.31.0
-	github.com/hashicorp/terraform-plugin-log v0.10.0
+	github.com/hashicorp/terraform-plugin-log v0.11.0
 	github.com/hashicorp/terraform-plugin-testing v1.13.3
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c
 	golang.org/x/oauth2 v0.36.0
-	google.golang.org/grpc v1.82.1
+	google.golang.org/grpc v1.83.0
 	google.golang.org/protobuf v1.36.11
 )
 
@@ -59,13 +59,13 @@ require (
 	github.com/vmihailenco/msgpack/v5 v5.4.1 // indirect
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
 	github.com/zclconf/go-cty v1.18.1 // indirect
-	golang.org/x/crypto v0.50.0 // indirect
+	golang.org/x/crypto v0.51.0 // indirect
 	golang.org/x/mod v0.35.0 // indirect
-	golang.org/x/net v0.53.0 // indirect
+	golang.org/x/net v0.55.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
-	golang.org/x/sys v0.43.0 // indirect
-	golang.org/x/text v0.36.0 // indirect
-	golang.org/x/tools v0.43.0 // indirect
+	golang.org/x/sys v0.45.0 // indirect
+	golang.org/x/text v0.37.0 // indirect
+	golang.org/x/tools v0.44.0 // indirect
 	google.golang.org/appengine v1.6.8 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20260414002931-afd174a4e478 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260526163538-3dc84a4a5aaa // indirect
 )

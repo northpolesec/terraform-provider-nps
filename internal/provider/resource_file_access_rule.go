@@ -534,7 +534,18 @@ func (r *FileAccessRuleResource) ListResourceConfigSchema(ctx context.Context, r
 
 func (r *FileAccessRuleResource) List(ctx context.Context, req list.ListRequest, stream *list.ListResultsStream) {
 	stream.Results = func(push func(list.ListResult) bool) {
-		ret, err := r.client.ListFileAccessRules(ctx, apipb.ListFileAccessRulesRequest_builder{}.Build())
+		rules, err := collectPages(func(page int) ([]*apipb.FileAccessRule, bool, error) {
+			ret, err := r.client.ListFileAccessRules(ctx, apipb.ListFileAccessRulesRequest_builder{
+				PageSize: proto.Uint32(uint32(listPageSize)),
+				Page:     proto.Uint32(uint32(page)),
+			}.Build())
+			if err != nil {
+				return nil, false, err
+			}
+			return ret.GetRules(), ret.GetMore(), nil
+		}, func(rule *apipb.FileAccessRule) string {
+			return strconv.FormatInt(rule.GetRuleId(), 10)
+		})
 		if err != nil {
 			result := req.NewListResult(ctx)
 			result.Diagnostics.AddError("Client Error", "Failed to list file access rules: "+err.Error())
@@ -542,7 +553,7 @@ func (r *FileAccessRuleResource) List(ctx context.Context, req list.ListRequest,
 			return
 		}
 
-		for _, rule := range ret.GetRules() {
+		for _, rule := range rules {
 			result := req.NewListResult(ctx)
 			result.DisplayName = rule.GetName()
 
