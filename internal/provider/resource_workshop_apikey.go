@@ -244,6 +244,15 @@ func NewAPIKeyListResource() list.ListResource {
 	return &APIKeyResource{}
 }
 
+// listAPIKeysPage infers continuation from a full page because, unlike the
+// other Workshop list responses, ListAPIKeysResponse does not expose a More
+// field. A full final page therefore causes one harmless extra request; the
+// following short (usually empty) page terminates collection.
+func listAPIKeysPage(ret *apipb.ListAPIKeysResponse) ([]*apipb.APIKey, bool) {
+	keys := ret.GetKeys()
+	return keys, pageHasMore(len(keys), false)
+}
+
 func (r *APIKeyResource) ListResourceConfigSchema(ctx context.Context, req list.ListResourceSchemaRequest, resp *list.ListResourceSchemaResponse) {
 	resp.Schema = listschema.Schema{
 		Description: "List all API keys in the Workshop instance.",
@@ -253,7 +262,19 @@ func (r *APIKeyResource) ListResourceConfigSchema(ctx context.Context, req list.
 
 func (r *APIKeyResource) List(ctx context.Context, req list.ListRequest, stream *list.ListResultsStream) {
 	stream.Results = func(push func(list.ListResult) bool) {
-		ret, err := r.client.ListAPIKeys(ctx, apipb.ListAPIKeysRequest_builder{}.Build())
+		keys, err := collectPages(func(page int) ([]*apipb.APIKey, bool, error) {
+			ret, err := r.client.ListAPIKeys(ctx, apipb.ListAPIKeysRequest_builder{
+				PageSize: proto.Uint32(uint32(listPageSize)),
+				Page:     proto.Uint32(uint32(page)),
+			}.Build())
+			if err != nil {
+				return nil, false, err
+			}
+			keys, more := listAPIKeysPage(ret)
+			return keys, more, nil
+		}, func(key *apipb.APIKey) string {
+			return key.GetName()
+		})
 		if err != nil {
 			result := req.NewListResult(ctx)
 			result.Diagnostics.AddError("Client Error", "Failed to list API keys: "+err.Error())
@@ -261,7 +282,7 @@ func (r *APIKeyResource) List(ctx context.Context, req list.ListRequest, stream 
 			return
 		}
 
-		for _, key := range ret.GetKeys() {
+		for _, key := range keys {
 			result := req.NewListResult(ctx)
 			result.DisplayName = key.GetName()
 
