@@ -35,6 +35,17 @@ jobs:
       - name: Build
         run: go build -v ./...
 
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # ratchet:hashicorp/setup-terraform@v4
+        with:
+          terraform_wrapper: false
+
+      - name: Check generated docs
+        run: |
+          (cd tools && go generate)
+          git add -A
+          git diff --cached --exit-code
+
       - name: Test
         run: go test -race ./...
 
