@@ -63,13 +63,6 @@ resource "nps_workshop_package_rule" "engineering_homebrew" {
   # The broadest type available for the package, falling back to narrower
   # types when the preferred one is not published.
   rule_type = "TEAMID"
-
-  lifecycle {
-    # tag, name and source form the natural key. Changing any of them replaces
-    # the rule, and the default destroy-then-create leaves a window with no
-    # rule in place.
-    create_before_destroy = true
-  }
 }
 
 # Narrow a rule to a range of versions. Useful when a known-bad release needs
