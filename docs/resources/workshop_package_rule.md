@@ -6,14 +6,7 @@ description: |-
   The nps_workshop_package_rule resource manages Package Rules.
   Package rules sync identifiers from GAL for a package.
   Management of package rules requires the read:rules and write:rules permissions.
-  Updates to non-key fields (such as policy) are applied atomically in place. Changing the rule's natural key (tag, name, or source) forces the rule to be replaced: by default Terraform destroys the old rule before creating the new one, leaving a brief window with no rule in place. To avoid that window, add a create_before_destroy lifecycle block:
-  
-  resource "nps_workshop_package_rule" "example" {
-    # ...
-    lifecycle {
-      create_before_destroy = true
-    }
-  }
+  Updates to non-key fields (such as policy) are applied atomically in place. Changing the rule's natural key (tag, name, or source) forces the rule to be replaced. A tag change retargets the same package to a different host group. A name or source change points the rule at a different package entirely. Either way, deleting the old package rule does not remove the execution rules it already generated: those rules stay active on hosts until removed separately.
 ---
 
 # nps_workshop_package_rule (Resource)
@@ -24,16 +17,7 @@ Package rules sync identifiers from GAL for a package.
 
 Management of package rules requires the `read:rules` and `write:rules` permissions.
 
-Updates to non-key fields (such as `policy`) are applied atomically in place. Changing the rule's natural key (`tag`, `name`, or `source`) forces the rule to be replaced: by default Terraform destroys the old rule before creating the new one, leaving a brief window with no rule in place. To avoid that window, add a `create_before_destroy` lifecycle block:
-
-```hcl
-resource "nps_workshop_package_rule" "example" {
-  # ...
-  lifecycle {
-    create_before_destroy = true
-  }
-}
-```
+Updates to non-key fields (such as `policy`) are applied atomically in place. Changing the rule's natural key (`tag`, `name`, or `source`) forces the rule to be replaced. A `tag` change retargets the same package to a different host group. A `name` or `source` change points the rule at a different package entirely. Either way, deleting the old package rule does not remove the execution rules it already generated: those rules stay active on hosts until removed separately.
 
 ## Example Usage
 

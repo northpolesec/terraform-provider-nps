@@ -5,7 +5,7 @@ subcategory: ""
 description: |-
   The nps_workshop_file_access_rule resource manages File Access Rules.
   Management of file access rules requires the read:rules and write:rules permissions.
-  Updates to non-key fields are applied atomically in place. Changing the rule's natural key (name or tag) forces the rule to be replaced: by default Terraform destroys the old rule before creating the new one, leaving a brief window with no rule in place. To avoid that window, add a create_before_destroy lifecycle block:
+  Updates to non-key fields are applied atomically in place. Changing the rule's natural key (name or tag) forces the rule to be replaced: by default Terraform destroys the old rule before creating the new one, leaving a brief window with no rule in place. This matters when a rule keeps the same paths and processes and is only being renamed or retargeted to another host group. Add a create_before_destroy lifecycle block to avoid the window:
   
   resource "nps_workshop_file_access_rule" "example" {
     # ...
@@ -21,7 +21,7 @@ The `nps_workshop_file_access_rule` resource manages File Access Rules.
 
 Management of file access rules requires the `read:rules` and `write:rules` permissions.
 
-Updates to non-key fields are applied atomically in place. Changing the rule's natural key (`name` or `tag`) forces the rule to be replaced: by default Terraform destroys the old rule before creating the new one, leaving a brief window with no rule in place. To avoid that window, add a `create_before_destroy` lifecycle block:
+Updates to non-key fields are applied atomically in place. Changing the rule's natural key (`name` or `tag`) forces the rule to be replaced: by default Terraform destroys the old rule before creating the new one, leaving a brief window with no rule in place. This matters when a rule keeps the same paths and processes and is only being renamed or retargeted to another host group. Add a `create_before_destroy` lifecycle block to avoid the window:
 
 ```hcl
 resource "nps_workshop_file_access_rule" "example" {
