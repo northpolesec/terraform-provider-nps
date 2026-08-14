@@ -66,7 +66,7 @@ Optional:
 - `events` (List of String) Audit event types to deliver (e.g. `AUDIT_EVENT_RULE_UPSERT`). Empty delivers all types.
 - `headers` (Attributes List) Additional HTTP headers attached to every delivery. (see [below for nested schema](#nestedatt--audit_events--headers))
 - `secret` (String, Sensitive) Signing secret keying the HMAC-SHA256 signature sent in the `webhook-signature` header. Write-only server-side (never returned by the API). Conflicts with `secret_wo`.
-- `secret_wo` (String, Sensitive) Write-only variant of `secret`: its value is never stored in Terraform state. Supply from an ephemeral input. Conflicts with `secret`. Because write-only values are absent from state, changing this alone will not trigger an update — bump `secret_wo_version` to rotate it.
+- `secret_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Write-only variant of `secret`: its value is never stored in Terraform state. Supply from an ephemeral input. Conflicts with `secret`. Because write-only values are absent from state, changing this alone will not trigger an update — bump `secret_wo_version` to rotate it.
 - `secret_wo_version` (String) Trigger for rotating `secret_wo`. Since write-only values aren't stored in state, Terraform can't detect a changed `secret_wo` on its own; change this value whenever `secret_wo` changes to force the new secret to be sent.
 - `url` (String) Destination HTTPS URL. Empty disables the webhook.
 
@@ -88,7 +88,7 @@ Optional:
 - `enabled` (Boolean) Whether this webhook is enabled. A disabled webhook retains its URL and secret but delivers nothing.
 - `headers` (Attributes List) Additional HTTP headers attached to every delivery. (see [below for nested schema](#nestedatt--signal_reports--headers))
 - `secret` (String, Sensitive) Signing secret keying the HMAC-SHA256 signature sent in the `webhook-signature` header. Write-only server-side (never returned by the API). Conflicts with `secret_wo`.
-- `secret_wo` (String, Sensitive) Write-only variant of `secret`: its value is never stored in Terraform state. Supply from an ephemeral input. Conflicts with `secret`. Because write-only values are absent from state, changing this alone will not trigger an update — bump `secret_wo_version` to rotate it.
+- `secret_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Write-only variant of `secret`: its value is never stored in Terraform state. Supply from an ephemeral input. Conflicts with `secret`. Because write-only values are absent from state, changing this alone will not trigger an update — bump `secret_wo_version` to rotate it.
 - `secret_wo_version` (String) Trigger for rotating `secret_wo`. Since write-only values aren't stored in state, Terraform can't detect a changed `secret_wo` on its own; change this value whenever `secret_wo` changes to force the new secret to be sent.
 - `states` (List of String) Signal report states to deliver on (e.g. `SIGNAL_REPORT_STATE_NEW`). Empty delivers all states.
 - `url` (String) Destination HTTPS URL. Empty disables the webhook.
@@ -111,7 +111,7 @@ Optional:
 - `enabled` (Boolean) Whether this webhook is enabled. A disabled webhook retains its URL and secret but delivers nothing.
 - `headers` (Attributes List) Additional HTTP headers attached to every delivery. (see [below for nested schema](#nestedatt--software_approvals--headers))
 - `secret` (String, Sensitive) Signing secret keying the HMAC-SHA256 signature sent in the `webhook-signature` header. Write-only server-side (never returned by the API). Conflicts with `secret_wo`.
-- `secret_wo` (String, Sensitive) Write-only variant of `secret`: its value is never stored in Terraform state. Supply from an ephemeral input. Conflicts with `secret`. Because write-only values are absent from state, changing this alone will not trigger an update — bump `secret_wo_version` to rotate it.
+- `secret_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Write-only variant of `secret`: its value is never stored in Terraform state. Supply from an ephemeral input. Conflicts with `secret`. Because write-only values are absent from state, changing this alone will not trigger an update — bump `secret_wo_version` to rotate it.
 - `secret_wo_version` (String) Trigger for rotating `secret_wo`. Since write-only values aren't stored in state, Terraform can't detect a changed `secret_wo` on its own; change this value whenever `secret_wo` changes to force the new secret to be sent.
 - `url` (String) Destination HTTPS URL. Empty disables the webhook.
 
@@ -126,6 +126,8 @@ Required:
 ## Import
 
 Import is supported using the following syntax:
+
+The [`terraform import` command](https://developer.hashicorp.com/terraform/cli/commands/import) can be used, for example:
 
 ```shell
 terraform import nps_workshop_settings_webhooks.example webhook_settings
