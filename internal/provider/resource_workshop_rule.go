@@ -158,8 +158,8 @@ func (r *RuleResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 				},
 			},
 			"policy": schema.StringAttribute{
-				Description:         "The policy for this rule. The possible values are: ALLOWLIST, ALLOWLIST_COMPILER, BLOCKLIST, SILENT_BLOCKLIST, CEL, and SEATBELT.",
-				MarkdownDescription: "The policy for this rule. The possible values are: `ALLOWLIST`, `ALLOWLIST_COMPILER`, `BLOCKLIST`, `SILENT_BLOCKLIST`, `CEL`, and `SEATBELT`.",
+				Description:         "The policy for this rule. The possible values are: ALLOWLIST, ALLOWLIST_COMPILER, BLOCKLIST, SILENT_BLOCKLIST, SILENT_GUI_BLOCKLIST, SILENT_TTY_BLOCKLIST, CEL, and SEATBELT.",
+				MarkdownDescription: "The policy for this rule. The possible values are: `ALLOWLIST`, `ALLOWLIST_COMPILER`, `BLOCKLIST`, `SILENT_BLOCKLIST`, `SILENT_GUI_BLOCKLIST`, `SILENT_TTY_BLOCKLIST`, `CEL`, and `SEATBELT`.",
 				Required:            true,
 				Validators: []validator.String{
 					stringvalidator.OneOf(utils.ProtoEnumValidValues(apipb.Policy(0).Descriptor())...),

@@ -89,8 +89,8 @@ func (r *PackageRuleResource) Schema(ctx context.Context, req resource.SchemaReq
 				},
 			},
 			"source": schema.StringAttribute{
-				Description:         "The package source (e.g., PACKAGE_SOURCE_HOMEBREW, PACKAGE_SOURCE_NPM).",
-				MarkdownDescription: "The package source (e.g., `PACKAGE_SOURCE_HOMEBREW`, `PACKAGE_SOURCE_NPM`).",
+				Description:         "The package source. The possible values are: PACKAGE_SOURCE_HOMEBREW, PACKAGE_SOURCE_HOMEBREW_CASK, PACKAGE_SOURCE_NPM, PACKAGE_SOURCE_GITHUB, PACKAGE_SOURCE_RUST, PACKAGE_SOURCE_VSCODE, PACKAGE_SOURCE_TERRAFORM_PLUGIN, PACKAGE_SOURCE_URL, and PACKAGE_SOURCE_NIX. PACKAGE_SOURCE_BAZEL is reserved for future use and is not yet implemented.",
+				MarkdownDescription: "The package source. The possible values are: `PACKAGE_SOURCE_HOMEBREW`, `PACKAGE_SOURCE_HOMEBREW_CASK`, `PACKAGE_SOURCE_NPM`, `PACKAGE_SOURCE_GITHUB`, `PACKAGE_SOURCE_RUST`, `PACKAGE_SOURCE_VSCODE`, `PACKAGE_SOURCE_TERRAFORM_PLUGIN`, `PACKAGE_SOURCE_URL`, and `PACKAGE_SOURCE_NIX`. `PACKAGE_SOURCE_BAZEL` is reserved for future use and is not yet implemented.",
 				Required:            true,
 				Validators: []validator.String{
 					stringvalidator.OneOf(utils.ProtoEnumValidValues(apipb.PackageSource(0).Descriptor())...),
@@ -110,8 +110,8 @@ func (r *PackageRuleResource) Schema(ctx context.Context, req resource.SchemaReq
 				},
 			},
 			"policy": schema.StringAttribute{
-				Description:         "The policy for execution rules created from this package rule.",
-				MarkdownDescription: "The policy for execution rules created from this package rule.",
+				Description:         "The policy for execution rules created from this package rule. The possible values are: ALLOWLIST, ALLOWLIST_COMPILER, BLOCKLIST, SILENT_BLOCKLIST, SILENT_GUI_BLOCKLIST, SILENT_TTY_BLOCKLIST, and CEL. SEATBELT is not supported on package rules, which have no seatbelt policy field.",
+				MarkdownDescription: "The policy for execution rules created from this package rule. The possible values are: `ALLOWLIST`, `ALLOWLIST_COMPILER`, `BLOCKLIST`, `SILENT_BLOCKLIST`, `SILENT_GUI_BLOCKLIST`, `SILENT_TTY_BLOCKLIST`, and `CEL`. `SEATBELT` is not supported on package rules, which have no seatbelt policy field.",
 				Required:            true,
 				Validators: []validator.String{
 					stringvalidator.OneOf(utils.ProtoEnumValidValues(apipb.Policy(0).Descriptor())...),

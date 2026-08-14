@@ -70,9 +70,9 @@ resource "nps_workshop_package_rule" "engineering_terraform" {
 ### Required
 
 - `name` (String) The package name (e.g., `wget`, `express`).
-- `policy` (String) The policy for execution rules created from this package rule.
+- `policy` (String) The policy for execution rules created from this package rule. The possible values are: `ALLOWLIST`, `ALLOWLIST_COMPILER`, `BLOCKLIST`, `SILENT_BLOCKLIST`, `SILENT_GUI_BLOCKLIST`, `SILENT_TTY_BLOCKLIST`, and `CEL`. `SEATBELT` is not supported on package rules, which have no seatbelt policy field.
 - `rule_type` (String) What type of rule should be created. Uses the broadest available type from GAL, falling back to more specific types if the preferred type isn't available. Only `TEAMID`, `CERTIFICATE`, `SIGNINGID`, `CDHASH`, and `BINARY` are supported.
-- `source` (String) The package source (e.g., `PACKAGE_SOURCE_HOMEBREW`, `PACKAGE_SOURCE_NPM`).
+- `source` (String) The package source. The possible values are: `PACKAGE_SOURCE_HOMEBREW`, `PACKAGE_SOURCE_HOMEBREW_CASK`, `PACKAGE_SOURCE_NPM`, `PACKAGE_SOURCE_GITHUB`, `PACKAGE_SOURCE_RUST`, `PACKAGE_SOURCE_VSCODE`, `PACKAGE_SOURCE_TERRAFORM_PLUGIN`, `PACKAGE_SOURCE_URL`, and `PACKAGE_SOURCE_NIX`. `PACKAGE_SOURCE_BAZEL` is reserved for future use and is not yet implemented.
 - `tag` (String) The tag for this package rule. The tag determines which hosts this rule will apply to. The tag must already exist in Workshop.
 
 ### Optional

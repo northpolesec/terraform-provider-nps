@@ -65,7 +65,7 @@ resource "nps_workshop_rule" "yes" {
 ### Required
 
 - `identifier` (String) The identifier for this rule. The format of this identifier depends on the rule type.
-- `policy` (String) The policy for this rule. The possible values are: `ALLOWLIST`, `ALLOWLIST_COMPILER`, `BLOCKLIST`, `SILENT_BLOCKLIST`, `CEL`, and `SEATBELT`.
+- `policy` (String) The policy for this rule. The possible values are: `ALLOWLIST`, `ALLOWLIST_COMPILER`, `BLOCKLIST`, `SILENT_BLOCKLIST`, `SILENT_GUI_BLOCKLIST`, `SILENT_TTY_BLOCKLIST`, `CEL`, and `SEATBELT`.
 - `rule_type` (String) The type of this rule. The possible values are: `BINARY`, `CERTIFICATE`, `TEAMID`, `SIGNINGID`, and `CDHASH`.
 - `tag` (String) The tag for this rule. The tag determines which hosts this rule will apply to. The tag must already exist in Workshop.
 
