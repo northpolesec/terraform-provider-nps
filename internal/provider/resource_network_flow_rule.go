@@ -126,7 +126,7 @@ func (r *NetworkFlowRuleResource) Schema(ctx context.Context, req resource.Schem
 				MarkdownDescription: "The action to take on network flows matching this rule. The possible values are: `NETWORK_FLOW_RULE_ACTION_ALLOW`, `NETWORK_FLOW_RULE_ACTION_DENY`, `NETWORK_FLOW_RULE_ACTION_SILENT_DENY`, `NETWORK_FLOW_RULE_ACTION_AUDIT`.",
 				Required:            true,
 				Validators: []validator.String{
-					stringvalidator.OneOf(utils.ProtoEnumToList(apipb.NetworkFlowRuleAction(0).Descriptor())...),
+					stringvalidator.OneOf(utils.ProtoEnumValidValues(apipb.NetworkFlowRuleAction(0).Descriptor())...),
 				},
 			},
 			"direction": schema.StringAttribute{
@@ -134,7 +134,7 @@ func (r *NetworkFlowRuleResource) Schema(ctx context.Context, req resource.Schem
 				MarkdownDescription: "The direction of network flows this rule applies to, relative to the host. The possible values are: `NETWORK_FLOW_DIRECTION_ANY`, `NETWORK_FLOW_DIRECTION_OUTGOING`, `NETWORK_FLOW_DIRECTION_INCOMING`.",
 				Required:            true,
 				Validators: []validator.String{
-					stringvalidator.OneOf(utils.ProtoEnumToList(apipb.NetworkFlowDirection(0).Descriptor())...),
+					stringvalidator.OneOf(utils.ProtoEnumValidValues(apipb.NetworkFlowDirection(0).Descriptor())...),
 				},
 			},
 			"priority": schema.BoolAttribute{

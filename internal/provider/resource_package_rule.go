@@ -93,7 +93,7 @@ func (r *PackageRuleResource) Schema(ctx context.Context, req resource.SchemaReq
 				MarkdownDescription: "The package source (e.g., `PACKAGE_SOURCE_HOMEBREW`, `PACKAGE_SOURCE_NPM`).",
 				Required:            true,
 				Validators: []validator.String{
-					stringvalidator.OneOf(utils.ProtoEnumToList(apipb.PackageSource(0).Descriptor())...),
+					stringvalidator.OneOf(utils.ProtoEnumValidValues(apipb.PackageSource(0).Descriptor())...),
 				},
 				// Part of the natural key; see tag.
 				PlanModifiers: []planmodifier.String{
@@ -114,7 +114,7 @@ func (r *PackageRuleResource) Schema(ctx context.Context, req resource.SchemaReq
 				MarkdownDescription: "The policy for execution rules created from this package rule.",
 				Required:            true,
 				Validators: []validator.String{
-					stringvalidator.OneOf(utils.ProtoEnumToList(apipb.Policy(0).Descriptor())...),
+					stringvalidator.OneOf(utils.ProtoEnumValidValues(apipb.Policy(0).Descriptor())...),
 				},
 			},
 			"rule_type": schema.StringAttribute{
@@ -122,7 +122,7 @@ func (r *PackageRuleResource) Schema(ctx context.Context, req resource.SchemaReq
 				MarkdownDescription: "What type of rule should be created. Uses the broadest available type from GAL, falling back to more specific types if the preferred type isn't available. Only `TEAMID`, `CERTIFICATE`, `SIGNINGID`, `CDHASH`, and `BINARY` are supported.",
 				Required:            true,
 				Validators: []validator.String{
-					stringvalidator.OneOf(utils.ProtoEnumToList(apipb.RuleType(0).Descriptor())...),
+					stringvalidator.OneOf(utils.ProtoEnumValidValues(apipb.RuleType(0).Descriptor())...),
 				},
 			},
 			"min_date": schema.StringAttribute{

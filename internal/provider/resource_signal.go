@@ -107,7 +107,7 @@ func (r *SignalResource) Schema(ctx context.Context, req resource.SchemaRequest,
 				MarkdownDescription: "The severity assigned to reports produced by this signal.",
 				Required:            true,
 				Validators: []validator.String{
-					stringvalidator.OneOf(utils.ProtoEnumToList(commonpb.Severity(0).Descriptor())...),
+					stringvalidator.OneOf(utils.ProtoEnumValidValues(commonpb.Severity(0).Descriptor())...),
 				},
 			},
 			"expression": schema.StringAttribute{

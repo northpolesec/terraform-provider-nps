@@ -150,7 +150,7 @@ func (r *RuleResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 				MarkdownDescription: "The type of this rule. The possible values are: `BINARY`, `CERTIFICATE`, `TEAMID`, `SIGNINGID`, and `CDHASH`.",
 				Required:            true,
 				Validators: []validator.String{
-					stringvalidator.OneOf(utils.ProtoEnumToList(apipb.RuleType(0).Descriptor())...),
+					stringvalidator.OneOf(utils.ProtoEnumValidValues(apipb.RuleType(0).Descriptor())...),
 				},
 				// Part of the natural key; see identifier.
 				PlanModifiers: []planmodifier.String{
@@ -162,7 +162,7 @@ func (r *RuleResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 				MarkdownDescription: "The policy for this rule. The possible values are: `ALLOWLIST`, `ALLOWLIST_COMPILER`, `BLOCKLIST`, `SILENT_BLOCKLIST`, `CEL`, and `SEATBELT`.",
 				Required:            true,
 				Validators: []validator.String{
-					stringvalidator.OneOf(utils.ProtoEnumToList(apipb.Policy(0).Descriptor())...),
+					stringvalidator.OneOf(utils.ProtoEnumValidValues(apipb.Policy(0).Descriptor())...),
 				},
 			},
 			"block_reason": schema.StringAttribute{
