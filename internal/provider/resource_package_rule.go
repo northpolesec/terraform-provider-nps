@@ -64,6 +64,12 @@ type PackageRuleResourceModel struct {
 	Id types.Int64 `tfsdk:"id"`
 }
 
+func clearPackageRuleOptionalState(data *PackageRuleResourceModel) {
+	data.MinDate = normalizeAbsentOptionalString(data.MinDate)
+	data.MaxDate = normalizeAbsentOptionalString(data.MaxDate)
+	data.VersionRegexp = normalizeAbsentOptionalString(data.VersionRegexp)
+}
+
 func (r *PackageRuleResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_workshop_package_rule"
 	// The rule ID (used as the identity) changes on every upsert, including
@@ -241,6 +247,7 @@ func (r *PackageRuleResource) Read(ctx context.Context, req resource.ReadRequest
 	// Now that we've found the rule, overwrite the state data with the actual
 	// values retrieved via the API.
 	rule := ret.GetRules()[0]
+	clearPackageRuleOptionalState(&data)
 	data.Id = types.Int64Value(rule.GetRuleId())
 	data.Tag = types.StringValue(rule.GetTag())
 	data.Source = types.StringValue(rule.GetSource().String())

@@ -82,6 +82,45 @@ type NetworkFlowRuleResourceModel struct {
 	Id types.Int64 `tfsdk:"id"`
 }
 
+func clearNetworkFlowRuleOptionalState(data *NetworkFlowRuleResourceModel) {
+	data.ProcessCdHashes = normalizeAbsentOptionalList(data.ProcessCdHashes, types.StringType)
+	data.ProcessSigningIds = normalizeAbsentOptionalList(data.ProcessSigningIds, types.StringType)
+	data.ProcessTeamIds = normalizeAbsentOptionalList(data.ProcessTeamIds, types.StringType)
+	data.RemoteHostnames = normalizeAbsentOptionalList(data.RemoteHostnames, types.StringType)
+	data.RemoteDomains = normalizeAbsentOptionalList(data.RemoteDomains, types.StringType)
+	data.RemoteAddresses = normalizeAbsentOptionalList(data.RemoteAddresses, types.StringType)
+	data.Protocols = normalizeAbsentOptionalList(data.Protocols, types.Int64Type)
+	data.CustomMsg = normalizeAbsentOptionalString(data.CustomMsg)
+	data.CustomUrl = normalizeAbsentOptionalString(data.CustomUrl)
+	data.Comment = normalizeAbsentOptionalString(data.Comment)
+	data.Ports = normalizeAbsentOptionalSlice(data.Ports)
+}
+
+func networkFlowRulePortsFromProto(prior []NetworkFlowRulePortRangeModel, ports []*apipb.NetworkFlowRule_PortRange) []NetworkFlowRulePortRangeModel {
+	if len(ports) == 0 {
+		return normalizeAbsentOptionalSlice(prior)
+	}
+
+	result := make([]NetworkFlowRulePortRangeModel, 0, len(ports))
+	for i, port := range ports {
+		model := NetworkFlowRulePortRangeModel{
+			Low:  types.Int64Value(int64(port.GetLow())),
+			High: types.Int64Null(),
+		}
+		if port.GetHigh() != 0 {
+			model.High = types.Int64Value(int64(port.GetHigh()))
+		} else if i < len(prior) &&
+			!prior[i].Low.IsNull() && !prior[i].Low.IsUnknown() &&
+			prior[i].Low.ValueInt64() == int64(port.GetLow()) &&
+			!prior[i].High.IsNull() && !prior[i].High.IsUnknown() &&
+			prior[i].High.ValueInt64() == 0 {
+			model.High = prior[i].High
+		}
+		result = append(result, model)
+	}
+	return result
+}
+
 // NetworkFlowRulePortRangeModel describes a single ports block.
 type NetworkFlowRulePortRangeModel struct {
 	Low  types.Int64 `tfsdk:"low"`
@@ -341,6 +380,8 @@ func (r *NetworkFlowRuleResource) Read(ctx context.Context, req resource.ReadReq
 	// Now that we've found the rule, overwrite the state data with the actual
 	// values retrieved via the API.
 	rule := ret.GetRules()[0]
+	priorPorts := data.Ports
+	clearNetworkFlowRuleOptionalState(&data)
 	data.Id = types.Int64Value(rule.GetRuleId())
 	data.Tag = types.StringValue(rule.GetTag())
 	data.Name = types.StringValue(rule.GetName())
@@ -393,18 +434,7 @@ func (r *NetworkFlowRuleResource) Read(ctx context.Context, req resource.ReadReq
 		}
 		data.Protocols, _ = types.ListValueFrom(ctx, types.Int64Type, protocols)
 	}
-	if len(rule.GetPorts()) > 0 {
-		data.Ports = make([]NetworkFlowRulePortRangeModel, 0, len(rule.GetPorts()))
-		for _, p := range rule.GetPorts() {
-			port := NetworkFlowRulePortRangeModel{
-				Low: types.Int64Value(int64(p.GetLow())),
-			}
-			if p.GetHigh() != 0 {
-				port.High = types.Int64Value(int64(p.GetHigh()))
-			}
-			data.Ports = append(data.Ports, port)
-		}
-	}
+	data.Ports = networkFlowRulePortsFromProto(priorPorts, rule.GetPorts())
 
 	// Set the identity
 	resp.Diagnostics.Append(resp.Identity.Set(ctx, NetworkFlowRuleIdentityModel{Id: data.Id})...)
