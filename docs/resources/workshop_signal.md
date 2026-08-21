@@ -5,7 +5,7 @@ subcategory: ""
 description: |-
   The nps_workshop_signal resource manages signals. A signal is a CEL expression evaluated against events on hosts carrying a given tag; a match produces a signal report. The (name, tag) pair is the primary key.
   Management of signals requires the read:rules and write:rules permissions.
-  Updates to non-key fields are applied atomically in place. Changing the signal's natural key (name or tag) forces the signal to be replaced: by default Terraform destroys the old signal before creating the new one, leaving a brief window with no signal in place. To avoid that window, add a create_before_destroy lifecycle block:
+  Updates to non-key fields are applied atomically in place. Changing the signal's natural key (name or tag) forces the signal to be replaced: by default Terraform destroys the old signal before creating the new one, leaving a brief window with no signal in place. This matters when a signal keeps the same expression and is only being renamed or moved to another tag. Add a create_before_destroy lifecycle block to avoid the window:
   
   resource "nps_workshop_signal" "example" {
     # ...
@@ -21,7 +21,7 @@ The `nps_workshop_signal` resource manages signals. A signal is a CEL expression
 
 Management of signals requires the `read:rules` and `write:rules` permissions.
 
-Updates to non-key fields are applied atomically in place. Changing the signal's natural key (`name` or `tag`) forces the signal to be replaced: by default Terraform destroys the old signal before creating the new one, leaving a brief window with no signal in place. To avoid that window, add a `create_before_destroy` lifecycle block:
+Updates to non-key fields are applied atomically in place. Changing the signal's natural key (`name` or `tag`) forces the signal to be replaced: by default Terraform destroys the old signal before creating the new one, leaving a brief window with no signal in place. This matters when a signal keeps the same expression and is only being renamed or moved to another tag. Add a `create_before_destroy` lifecycle block to avoid the window:
 
 ```hcl
 resource "nps_workshop_signal" "example" {

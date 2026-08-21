@@ -13,6 +13,21 @@ Use the navigation to the left to read about the available resources. If there's
 a resource type missing that you would like to manage with Terraform, please let
 us know.
 
+## Installation
+
+Add the provider to your configuration's `required_providers` block:
+
+```hcl
+terraform {
+  required_providers {
+    nps = {
+      source  = "northpolesec/nps"
+      version = "~> 1.0"
+    }
+  }
+}
+```
+
 ## Example Usage
 
 ### With short-lived access tokens
