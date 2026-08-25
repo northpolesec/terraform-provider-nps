@@ -3,21 +3,21 @@
 page_title: "nps_workshop_package_rule Resource - nps"
 subcategory: ""
 description: |-
-  The nps_workshop_package_rule resource manages Package Rules.
-  Package rules sync identifiers from GAL for a package.
-  Management of package rules requires the read:rules and write:rules permissions.
-  Updates to non-key fields (such as policy) are applied atomically in place. Changing the rule's natural key (tag, name, or source) forces the rule to be replaced. A tag change retargets the same package to a different host group. A name or source change points the rule at a different package entirely. Either way, deleting the old package rule does not remove the execution rules it already generated: those rules stay active on hosts until removed separately.
+  The nps_workshop_package_rule resource manages package rules.
+  Package rules sync identifiers from the package catalog.
+  You need the read:rules and write:rules permissions.
+  Changing policy or other non-key fields updates the existing rule. Changing tag, name, or source replaces it. A tag change points the same package at a different host group. A name or source change points the rule at a different package. Deleting a package rule doesn't remove the execution rules it already generated. Those rules stay active on hosts until you remove them separately.
 ---
 
 # nps_workshop_package_rule (Resource)
 
-The `nps_workshop_package_rule` resource manages Package Rules.
+The `nps_workshop_package_rule` resource manages package rules.
 
-Package rules sync identifiers from GAL for a package.
+Package rules sync identifiers from the package catalog.
 
-Management of package rules requires the `read:rules` and `write:rules` permissions.
+You need the `read:rules` and `write:rules` permissions.
 
-Updates to non-key fields (such as `policy`) are applied atomically in place. Changing the rule's natural key (`tag`, `name`, or `source`) forces the rule to be replaced. A `tag` change retargets the same package to a different host group. A `name` or `source` change points the rule at a different package entirely. Either way, deleting the old package rule does not remove the execution rules it already generated: those rules stay active on hosts until removed separately.
+Changing `policy` or other non-key fields updates the existing rule. Changing `tag`, `name`, or `source` replaces it. A `tag` change points the same package at a different host group. A `name` or `source` change points the rule at a different package. Deleting a package rule doesn't remove the execution rules it already generated. Those rules stay active on hosts until you remove them separately.
 
 ## Example Usage
 

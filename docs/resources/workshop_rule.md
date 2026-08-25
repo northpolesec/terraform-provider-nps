@@ -3,34 +3,18 @@
 page_title: "nps_workshop_rule Resource - nps"
 subcategory: ""
 description: |-
-  The nps_workshop_rule resource manages Rules.
-  Management of rules requires the read:rules and write:rules permissions.
-  Updates to non-key fields (such as policy or comment) are applied atomically in place. Changing identifier or rule_type forces the rule to be replaced with one that targets a different binary, certificate, or signing identity: the old and new rules protect unrelated things, so there is no window to avoid. Changing tag alone retargets the same rule to a different host group. By default Terraform destroys the old rule before creating the new one, leaving a brief window where neither tag has it. To avoid that window, add a create_before_destroy lifecycle block:
-  
-  resource "nps_workshop_rule" "example" {
-    # ...
-    lifecycle {
-      create_before_destroy = true
-    }
-  }
+  The nps_workshop_rule resource manages rules.
+  You need the read:rules and write:rules permissions.
+  Changing policy or comment updates the existing rule. Changing identifier or rule_type replaces it with a rule for a different binary, certificate, or signing identity. That's a different target, so hosts don't need both rules at once. Changing tag alone moves the same rule to a different host group. Terraform destroys the old rule first, so neither tag has it until the new one is created. Set create_before_destroy if you want the new tag to have the rule before the old tag loses it.
 ---
 
 # nps_workshop_rule (Resource)
 
-The `nps_workshop_rule` resource manages Rules.
+The `nps_workshop_rule` resource manages rules.
 
-Management of rules requires the `read:rules` and `write:rules` permissions.
+You need the `read:rules` and `write:rules` permissions.
 
-Updates to non-key fields (such as `policy` or `comment`) are applied atomically in place. Changing `identifier` or `rule_type` forces the rule to be replaced with one that targets a different binary, certificate, or signing identity: the old and new rules protect unrelated things, so there is no window to avoid. Changing `tag` alone retargets the same rule to a different host group. By default Terraform destroys the old rule before creating the new one, leaving a brief window where neither tag has it. To avoid that window, add a `create_before_destroy` lifecycle block:
-
-```hcl
-resource "nps_workshop_rule" "example" {
-  # ...
-  lifecycle {
-    create_before_destroy = true
-  }
-}
-```
+Changing `policy` or `comment` updates the existing rule. Changing `identifier` or `rule_type` replaces it with a rule for a different binary, certificate, or signing identity. That's a different target, so hosts don't need both rules at once. Changing `tag` alone moves the same rule to a different host group. Terraform destroys the old rule first, so neither tag has it until the new one is created. Set `create_before_destroy` if you want the new tag to have the rule before the old tag loses it.
 
 ## Example Usage
 

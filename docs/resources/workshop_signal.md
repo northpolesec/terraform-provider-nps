@@ -3,34 +3,18 @@
 page_title: "nps_workshop_signal Resource - nps"
 subcategory: ""
 description: |-
-  The nps_workshop_signal resource manages signals. A signal is a CEL expression evaluated against events on hosts carrying a given tag; a match produces a signal report. The (name, tag) pair is the primary key.
-  Management of signals requires the read:rules and write:rules permissions.
-  Updates to non-key fields are applied atomically in place. Changing the signal's natural key (name or tag) forces the signal to be replaced: by default Terraform destroys the old signal before creating the new one, leaving a brief window with no signal in place. This matters when a signal keeps the same expression and is only being renamed or moved to another tag. Add a create_before_destroy lifecycle block to avoid the window:
-  
-  resource "nps_workshop_signal" "example" {
-    # ...
-    lifecycle {
-      create_before_destroy = true
-    }
-  }
+  The nps_workshop_signal resource manages signals. A signal is a CEL expression evaluated against events on hosts carrying a given tag; a match produces a signal report.
+  You need the read:rules and write:rules permissions.
+  Changing expression, severity, or other non-key fields updates the existing signal. Changing name or tag replaces it. Terraform destroys the old signal first, so hosts have no signal until the new one is created. Set create_before_destroy if you're renaming the signal or moving it to another tag.
 ---
 
 # nps_workshop_signal (Resource)
 
-The `nps_workshop_signal` resource manages signals. A signal is a CEL expression evaluated against events on hosts carrying a given tag; a match produces a signal report. The `(name, tag)` pair is the primary key.
+The `nps_workshop_signal` resource manages signals. A signal is a CEL expression evaluated against events on hosts carrying a given tag; a match produces a signal report.
 
-Management of signals requires the `read:rules` and `write:rules` permissions.
+You need the `read:rules` and `write:rules` permissions.
 
-Updates to non-key fields are applied atomically in place. Changing the signal's natural key (`name` or `tag`) forces the signal to be replaced: by default Terraform destroys the old signal before creating the new one, leaving a brief window with no signal in place. This matters when a signal keeps the same expression and is only being renamed or moved to another tag. Add a `create_before_destroy` lifecycle block to avoid the window:
-
-```hcl
-resource "nps_workshop_signal" "example" {
-  # ...
-  lifecycle {
-    create_before_destroy = true
-  }
-}
-```
+Changing `expression`, `severity`, or other non-key fields updates the existing signal. Changing `name` or `tag` replaces it. Terraform destroys the old signal first, so hosts have no signal until the new one is created. Set `create_before_destroy` if you're renaming the signal or moving it to another tag.
 
 ## Example Usage
 
@@ -40,7 +24,7 @@ resource "nps_workshop_signal" "ChromeCookieAccess" {
   name        = "CRED-001"
   tag         = "global"
   description = "Access to the Chrome cookie store"
-  severity    = "SEVERITY_HIGH"
+  severity    = "HIGH"
   expression  = "event.file.path.endsWith('/Cookies')"
   labels      = ["credentials", "chrome"]
 }

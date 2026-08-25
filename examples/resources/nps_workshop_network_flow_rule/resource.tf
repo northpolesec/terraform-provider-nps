@@ -3,8 +3,8 @@
 resource "nps_workshop_network_flow_rule" "block_spacemolt" {
   name      = "block-spacemolt"
   tag       = "global"
-  action    = "NETWORK_FLOW_RULE_ACTION_DENY"
-  direction = "NETWORK_FLOW_DIRECTION_OUTGOING"
+  action    = "DENY"
+  direction = "OUTGOING"
 
   process_signing_ids = [
     "Q6L2SF6YDW:com.anthropic.claude-code",

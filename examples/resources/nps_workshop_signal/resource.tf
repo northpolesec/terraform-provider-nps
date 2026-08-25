@@ -3,7 +3,7 @@ resource "nps_workshop_signal" "ChromeCookieAccess" {
   name        = "CRED-001"
   tag         = "global"
   description = "Access to the Chrome cookie store"
-  severity    = "SEVERITY_HIGH"
+  severity    = "HIGH"
   expression  = "event.file.path.endsWith('/Cookies')"
   labels      = ["credentials", "chrome"]
 }
