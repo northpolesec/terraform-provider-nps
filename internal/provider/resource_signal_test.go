@@ -17,20 +17,20 @@ func TestAccSignal(t *testing.T) {
 		Steps: []resource.TestStep{
 			// Create and Read testing
 			{
-				Config: testAccSignalResourceConfig("CRED-001", "global", "SEVERITY_HIGH", false),
+				Config: testAccSignalResourceConfig("CRED-001", "global", "HIGH", false),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("nps_workshop_signal.test", "name", "CRED-001"),
 					resource.TestCheckResourceAttr("nps_workshop_signal.test", "tag", "global"),
-					resource.TestCheckResourceAttr("nps_workshop_signal.test", "severity", "SEVERITY_HIGH"),
+					resource.TestCheckResourceAttr("nps_workshop_signal.test", "severity", "HIGH"),
 					resource.TestCheckResourceAttr("nps_workshop_signal.test", "disabled", "false"),
 				),
 			},
 			// In-place (non-key) update: name and tag are unchanged, so the upsert
 			// supersedes the existing signal without a replace.
 			{
-				Config: testAccSignalResourceConfig("CRED-001", "global", "SEVERITY_CRITICAL", true),
+				Config: testAccSignalResourceConfig("CRED-001", "global", "CRITICAL", true),
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr("nps_workshop_signal.test", "severity", "SEVERITY_CRITICAL"),
+					resource.TestCheckResourceAttr("nps_workshop_signal.test", "severity", "CRITICAL"),
 					resource.TestCheckResourceAttr("nps_workshop_signal.test", "disabled", "true"),
 				),
 			},
@@ -38,7 +38,7 @@ func TestAccSignal(t *testing.T) {
 			// the signal to be replaced (destroy + create) rather than updated in
 			// place.
 			{
-				Config: testAccSignalResourceConfig("CRED-002", "global", "SEVERITY_CRITICAL", true),
+				Config: testAccSignalResourceConfig("CRED-002", "global", "CRITICAL", true),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("nps_workshop_signal.test", "name", "CRED-002"),
 				),
