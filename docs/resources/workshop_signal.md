@@ -53,7 +53,7 @@ resource "nps_workshop_signal" "ChromeCookieAccess" {
 
 - `expression` (String) CEL boolean expression over `event`. A true result is a match.
 - `name` (String) Stable identifier for the signal (e.g. `CRED-001`), echoed in reports. Unique per-tag.
-- `severity` (String) The severity assigned to reports produced by this signal. The possible values are: `SEVERITY_INFO`, `SEVERITY_LOW`, `SEVERITY_MEDIUM`, `SEVERITY_HIGH`, and `SEVERITY_CRITICAL`.
+- `severity` (String) The severity assigned to reports produced by this signal. The possible values are: `INFO`, `LOW`, `MEDIUM`, `HIGH`, and `CRITICAL`. The `SEVERITY_`-prefixed spellings are deprecated aliases accepted for backwards compatibility.
 - `tag` (String) The tag this signal applies to. The tag determines which hosts this signal will apply to and must already exist in Workshop.
 
 ### Optional

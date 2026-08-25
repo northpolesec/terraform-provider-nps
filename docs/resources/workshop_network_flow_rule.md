@@ -60,8 +60,8 @@ resource "nps_workshop_network_flow_rule" "block_spacemolt" {
 
 ### Required
 
-- `action` (String) The action to take on network flows matching this rule. The possible values are: `NETWORK_FLOW_RULE_ACTION_ALLOW`, `NETWORK_FLOW_RULE_ACTION_DENY`, `NETWORK_FLOW_RULE_ACTION_SILENT_DENY`, `NETWORK_FLOW_RULE_ACTION_AUDIT`.
-- `direction` (String) The direction of network flows this rule applies to, relative to the host. The possible values are: `NETWORK_FLOW_DIRECTION_ANY`, `NETWORK_FLOW_DIRECTION_OUTGOING`, `NETWORK_FLOW_DIRECTION_INCOMING`.
+- `action` (String) The action to take on network flows matching this rule. The possible values are: `ALLOW`, `DENY`, `SILENT_DENY`, and `AUDIT`. The `NETWORK_FLOW_RULE_ACTION_`-prefixed spellings are deprecated aliases accepted for backwards compatibility.
+- `direction` (String) The direction of network flows this rule applies to, relative to the host. The possible values are: `ANY`, `OUTGOING`, and `INCOMING`. The `NETWORK_FLOW_DIRECTION_`-prefixed spellings are deprecated aliases accepted for backwards compatibility.
 - `name` (String) The name for this network flow rule. Rule names are unique per-tag.
 - `tag` (String) The tag for this network flow rule. The tag determines which hosts this rule will apply to. The tag must already exist in Workshop.
 
