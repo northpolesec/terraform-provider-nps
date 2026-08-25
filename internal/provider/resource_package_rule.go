@@ -4,6 +4,7 @@ package provider
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 	"time"
 
@@ -44,6 +45,26 @@ func NewPackageRuleResource() resource.Resource {
 // write HOMEBREW, the proto says PACKAGE_SOURCE_HOMEBREW. The prefixed
 // spellings are deprecated aliases during a compatibility window.
 const packageSourcePrefix = "PACKAGE_SOURCE_"
+
+// packageSourceAcceptedValues is the source validator list: both spellings of
+// every PackageSource except BAZEL, which is reserved and not implemented.
+func packageSourceAcceptedValues() []string {
+	return slices.DeleteFunc(
+		utils.ProtoEnumAcceptedValues(apipb.PackageSource(0).Descriptor(), packageSourcePrefix),
+		func(s string) bool {
+			return s == "BAZEL" || s == packageSourcePrefix+"BAZEL"
+		},
+	)
+}
+
+// packagePolicyAcceptedValues is the policy validator list minus SEATBELT,
+// which package rules cannot carry (no seatbelt_policy field).
+func packagePolicyAcceptedValues() []string {
+	return slices.DeleteFunc(
+		utils.ProtoEnumValidValues(apipb.Policy(0).Descriptor()),
+		func(s string) bool { return s == "SEATBELT" },
+	)
+}
 
 // PackageRuleResource defines the resource implementation.
 type PackageRuleResource struct {
@@ -98,7 +119,7 @@ func (r *PackageRuleResource) Schema(ctx context.Context, req resource.SchemaReq
 				MarkdownDescription: "The package source. The possible values are: `HOMEBREW`, `HOMEBREW_CASK`, `NPM`, `GITHUB`, `RUST`, `VSCODE`, `TERRAFORM_PLUGIN`, `URL`, and `NIX`. `BAZEL` is reserved for future use and is not yet implemented. The `PACKAGE_SOURCE_`-prefixed spellings are deprecated aliases accepted for backwards compatibility.",
 				Required:            true,
 				Validators: []validator.String{
-					stringvalidator.OneOf(utils.ProtoEnumAcceptedValues(apipb.PackageSource(0).Descriptor(), packageSourcePrefix)...),
+					stringvalidator.OneOf(packageSourceAcceptedValues()...),
 				},
 				// Part of the natural key; see tag. enumForm must run before
 				// RequiresReplace so a spelling-only rewrite is not a replace.
@@ -121,7 +142,7 @@ func (r *PackageRuleResource) Schema(ctx context.Context, req resource.SchemaReq
 				MarkdownDescription: "The policy for execution rules created from this package rule. The possible values are: `ALLOWLIST`, `ALLOWLIST_COMPILER`, `BLOCKLIST`, `SILENT_BLOCKLIST`, `SILENT_GUI_BLOCKLIST`, `SILENT_TTY_BLOCKLIST`, and `CEL`. `SEATBELT` is not supported on package rules, which have no seatbelt policy field.",
 				Required:            true,
 				Validators: []validator.String{
-					stringvalidator.OneOf(utils.ProtoEnumValidValues(apipb.Policy(0).Descriptor())...),
+					stringvalidator.OneOf(packagePolicyAcceptedValues()...),
 				},
 			},
 			"rule_type": schema.StringAttribute{
