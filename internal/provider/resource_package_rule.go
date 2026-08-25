@@ -40,6 +40,11 @@ func NewPackageRuleResource() resource.Resource {
 	return &PackageRuleResource{}
 }
 
+// packageSourcePrefix is stripped from PackageSource values in HCL: users
+// write HOMEBREW, the proto says PACKAGE_SOURCE_HOMEBREW. The prefixed
+// spellings are deprecated aliases during a compatibility window.
+const packageSourcePrefix = "PACKAGE_SOURCE_"
+
 // PackageRuleResource defines the resource implementation.
 type PackageRuleResource struct {
 	client svcpb.WorkshopServiceClient
@@ -89,14 +94,16 @@ func (r *PackageRuleResource) Schema(ctx context.Context, req resource.SchemaReq
 				},
 			},
 			"source": schema.StringAttribute{
-				Description:         "The package source. The possible values are: PACKAGE_SOURCE_HOMEBREW, PACKAGE_SOURCE_HOMEBREW_CASK, PACKAGE_SOURCE_NPM, PACKAGE_SOURCE_GITHUB, PACKAGE_SOURCE_RUST, PACKAGE_SOURCE_VSCODE, PACKAGE_SOURCE_TERRAFORM_PLUGIN, PACKAGE_SOURCE_URL, and PACKAGE_SOURCE_NIX. PACKAGE_SOURCE_BAZEL is reserved for future use and is not yet implemented.",
-				MarkdownDescription: "The package source. The possible values are: `PACKAGE_SOURCE_HOMEBREW`, `PACKAGE_SOURCE_HOMEBREW_CASK`, `PACKAGE_SOURCE_NPM`, `PACKAGE_SOURCE_GITHUB`, `PACKAGE_SOURCE_RUST`, `PACKAGE_SOURCE_VSCODE`, `PACKAGE_SOURCE_TERRAFORM_PLUGIN`, `PACKAGE_SOURCE_URL`, and `PACKAGE_SOURCE_NIX`. `PACKAGE_SOURCE_BAZEL` is reserved for future use and is not yet implemented.",
+				Description:         "The package source. The possible values are: HOMEBREW, HOMEBREW_CASK, NPM, GITHUB, RUST, VSCODE, TERRAFORM_PLUGIN, URL, and NIX. BAZEL is reserved for future use and is not yet implemented. The PACKAGE_SOURCE_-prefixed spellings are deprecated aliases accepted for backwards compatibility.",
+				MarkdownDescription: "The package source. The possible values are: `HOMEBREW`, `HOMEBREW_CASK`, `NPM`, `GITHUB`, `RUST`, `VSCODE`, `TERRAFORM_PLUGIN`, `URL`, and `NIX`. `BAZEL` is reserved for future use and is not yet implemented. The `PACKAGE_SOURCE_`-prefixed spellings are deprecated aliases accepted for backwards compatibility.",
 				Required:            true,
 				Validators: []validator.String{
-					stringvalidator.OneOf(utils.ProtoEnumValidValues(apipb.PackageSource(0).Descriptor())...),
+					stringvalidator.OneOf(utils.ProtoEnumAcceptedValues(apipb.PackageSource(0).Descriptor(), packageSourcePrefix)...),
 				},
-				// Part of the natural key; see tag.
+				// Part of the natural key; see tag. enumForm must run before
+				// RequiresReplace so a spelling-only rewrite is not a replace.
 				PlanModifiers: []planmodifier.String{
+					enumForm(packageSourcePrefix),
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
@@ -219,7 +226,9 @@ func (r *PackageRuleResource) Read(ctx context.Context, req resource.ReadRequest
 	filter := fmt.Sprintf(`rule_id = %d`, data.Id.ValueInt64())
 	if !data.Source.IsNull() && !data.Source.IsUnknown() && data.Source.ValueString() != "" {
 		filter += fmt.Sprintf(` OR (name = "%s" AND source = "%s" AND tag = "%s")`,
-			data.Name.ValueString(), data.Source.ValueString(), data.Tag.ValueString())
+			data.Name.ValueString(),
+			utils.NormalizeEnum(data.Source.ValueString(), packageSourcePrefix),
+			data.Tag.ValueString())
 	}
 
 	ret, err := r.client.ListPackageRules(ctx, apipb.ListPackageRulesRequest_builder{
@@ -243,7 +252,7 @@ func (r *PackageRuleResource) Read(ctx context.Context, req resource.ReadRequest
 	rule := ret.GetRules()[0]
 	data.Id = types.Int64Value(rule.GetRuleId())
 	data.Tag = types.StringValue(rule.GetTag())
-	data.Source = types.StringValue(rule.GetSource().String())
+	data.Source = types.StringValue(utils.MatchEnumForm(data.Source.ValueString(), rule.GetSource().String(), packageSourcePrefix))
 	data.Name = types.StringValue(rule.GetName())
 	data.Policy = types.StringValue(rule.GetPolicy().String())
 	data.RuleType = types.StringValue(rule.GetRuleType().String())
@@ -267,7 +276,7 @@ func (r *PackageRuleResource) Read(ctx context.Context, req resource.ReadRequest
 
 // buildPackageRule builds the (upsert) PackageRule from the model.
 func buildPackageRule(data PackageRuleResourceModel, diags *diag.Diagnostics) *apipb.PackageRule {
-	source := apipb.PackageSource_value[data.Source.ValueString()]
+	source := apipb.PackageSource_value[utils.NormalizeEnum(data.Source.ValueString(), packageSourcePrefix)]
 	policy := apipb.Policy_value[data.Policy.ValueString()]
 	ruleType := apipb.RuleType_value[data.RuleType.ValueString()]
 
@@ -432,7 +441,7 @@ func (r *PackageRuleResource) List(ctx context.Context, req list.ListRequest, st
 				model := PackageRuleResourceModel{
 					Id:       types.Int64Value(rule.GetRuleId()),
 					Tag:      types.StringValue(rule.GetTag()),
-					Source:   types.StringValue(rule.GetSource().String()),
+					Source:   types.StringValue(utils.ShortEnum(rule.GetSource().String(), packageSourcePrefix)),
 					Name:     types.StringValue(rule.GetName()),
 					Policy:   types.StringValue(rule.GetPolicy().String()),
 					RuleType: types.StringValue(rule.GetRuleType().String()),
