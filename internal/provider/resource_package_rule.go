@@ -4,6 +4,7 @@ package provider
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 	"time"
 
@@ -40,6 +41,31 @@ func NewPackageRuleResource() resource.Resource {
 	return &PackageRuleResource{}
 }
 
+// packageSourcePrefix is stripped from PackageSource values in HCL: users
+// write HOMEBREW, the proto says PACKAGE_SOURCE_HOMEBREW. The prefixed
+// spellings are deprecated aliases during a compatibility window.
+const packageSourcePrefix = "PACKAGE_SOURCE_"
+
+// packageSourceAcceptedValues is the source validator list: both spellings of
+// every PackageSource except BAZEL, which is reserved and not implemented.
+func packageSourceAcceptedValues() []string {
+	return slices.DeleteFunc(
+		utils.ProtoEnumAcceptedValues(apipb.PackageSource(0).Descriptor(), packageSourcePrefix),
+		func(s string) bool {
+			return s == "BAZEL" || s == packageSourcePrefix+"BAZEL"
+		},
+	)
+}
+
+// packagePolicyAcceptedValues is the policy validator list minus SEATBELT,
+// which package rules cannot carry (no seatbelt_policy field).
+func packagePolicyAcceptedValues() []string {
+	return slices.DeleteFunc(
+		utils.ProtoEnumValidValues(apipb.Policy(0).Descriptor()),
+		func(s string) bool { return s == "SEATBELT" },
+	)
+}
+
 // PackageRuleResource defines the resource implementation.
 type PackageRuleResource struct {
 	client svcpb.WorkshopServiceClient
@@ -73,8 +99,8 @@ func (r *PackageRuleResource) Metadata(ctx context.Context, req resource.Metadat
 
 func (r *PackageRuleResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description:         "The nps_workshop_package_rule resource manages Package Rules. Package rules sync identifiers from GAL for a package. Management of package rules requires the read:rules and write:rules permissions. Changing tag, name, or source forces replacement; add a create_before_destroy lifecycle block to avoid a window where the rule does not exist.",
-		MarkdownDescription: "The `nps_workshop_package_rule` resource manages Package Rules.\n\nPackage rules sync identifiers from GAL for a package.\n\nManagement of package rules requires the `read:rules` and `write:rules` permissions.\n\nUpdates to non-key fields (such as `policy`) are applied atomically in place. Changing the rule's natural key (`tag`, `name`, or `source`) forces the rule to be replaced: by default Terraform destroys the old rule before creating the new one, leaving a brief window with no rule in place. To avoid that window, add a `create_before_destroy` lifecycle block:\n\n```hcl\nresource \"nps_workshop_package_rule\" \"example\" {\n  # ...\n  lifecycle {\n    create_before_destroy = true\n  }\n}\n```",
+		Description:         "The nps_workshop_package_rule resource manages package rules. Package rules sync identifiers from the package catalog. You need the read:rules and write:rules permissions. Changing policy or other non-key fields updates the existing rule. Changing tag, name, or source replaces it. A tag change points the same package at a different host group. A name or source change points the rule at a different package. Deleting a package rule doesn't remove the execution rules it already generated. Those rules stay active on hosts until you remove them separately.",
+		MarkdownDescription: "The `nps_workshop_package_rule` resource manages package rules.\n\nPackage rules sync identifiers from the package catalog.\n\nYou need the `read:rules` and `write:rules` permissions.\n\nChanging `policy` or other non-key fields updates the existing rule. Changing `tag`, `name`, or `source` replaces it. A `tag` change points the same package at a different host group. A `name` or `source` change points the rule at a different package. Deleting a package rule doesn't remove the execution rules it already generated. Those rules stay active on hosts until you remove them separately.",
 
 		Attributes: map[string]schema.Attribute{
 			"tag": schema.StringAttribute{
@@ -89,14 +115,16 @@ func (r *PackageRuleResource) Schema(ctx context.Context, req resource.SchemaReq
 				},
 			},
 			"source": schema.StringAttribute{
-				Description:         "The package source (e.g., PACKAGE_SOURCE_HOMEBREW, PACKAGE_SOURCE_NPM).",
-				MarkdownDescription: "The package source (e.g., `PACKAGE_SOURCE_HOMEBREW`, `PACKAGE_SOURCE_NPM`).",
+				Description:         "The package source. The possible values are: HOMEBREW, HOMEBREW_CASK, NPM, GITHUB, RUST, VSCODE, TERRAFORM_PLUGIN, URL, and NIX. BAZEL is reserved for future use and is not yet implemented. The PACKAGE_SOURCE_-prefixed spellings are deprecated aliases accepted for backwards compatibility.",
+				MarkdownDescription: "The package source. The possible values are: `HOMEBREW`, `HOMEBREW_CASK`, `NPM`, `GITHUB`, `RUST`, `VSCODE`, `TERRAFORM_PLUGIN`, `URL`, and `NIX`. `BAZEL` is reserved for future use and is not yet implemented. The `PACKAGE_SOURCE_`-prefixed spellings are deprecated aliases accepted for backwards compatibility.",
 				Required:            true,
 				Validators: []validator.String{
-					stringvalidator.OneOf(utils.ProtoEnumToList(apipb.PackageSource(0).Descriptor())...),
+					stringvalidator.OneOf(packageSourceAcceptedValues()...),
 				},
-				// Part of the natural key; see tag.
+				// Part of the natural key; see tag. enumForm must run before
+				// RequiresReplace so a spelling-only rewrite is not a replace.
 				PlanModifiers: []planmodifier.String{
+					enumForm(packageSourcePrefix),
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
@@ -110,11 +138,11 @@ func (r *PackageRuleResource) Schema(ctx context.Context, req resource.SchemaReq
 				},
 			},
 			"policy": schema.StringAttribute{
-				Description:         "The policy for execution rules created from this package rule.",
-				MarkdownDescription: "The policy for execution rules created from this package rule.",
+				Description:         "The policy for execution rules created from this package rule. The possible values are: ALLOWLIST, ALLOWLIST_COMPILER, BLOCKLIST, SILENT_BLOCKLIST, SILENT_GUI_BLOCKLIST, SILENT_TTY_BLOCKLIST, and CEL. SEATBELT is not supported on package rules, which have no seatbelt policy field.",
+				MarkdownDescription: "The policy for execution rules created from this package rule. The possible values are: `ALLOWLIST`, `ALLOWLIST_COMPILER`, `BLOCKLIST`, `SILENT_BLOCKLIST`, `SILENT_GUI_BLOCKLIST`, `SILENT_TTY_BLOCKLIST`, and `CEL`. `SEATBELT` is not supported on package rules, which have no seatbelt policy field.",
 				Required:            true,
 				Validators: []validator.String{
-					stringvalidator.OneOf(utils.ProtoEnumToList(apipb.Policy(0).Descriptor())...),
+					stringvalidator.OneOf(packagePolicyAcceptedValues()...),
 				},
 			},
 			"rule_type": schema.StringAttribute{
@@ -122,7 +150,7 @@ func (r *PackageRuleResource) Schema(ctx context.Context, req resource.SchemaReq
 				MarkdownDescription: "What type of rule should be created. Uses the broadest available type from GAL, falling back to more specific types if the preferred type isn't available. Only `TEAMID`, `CERTIFICATE`, `SIGNINGID`, `CDHASH`, and `BINARY` are supported.",
 				Required:            true,
 				Validators: []validator.String{
-					stringvalidator.OneOf(utils.ProtoEnumToList(apipb.RuleType(0).Descriptor())...),
+					stringvalidator.OneOf(utils.ProtoEnumValidValues(apipb.RuleType(0).Descriptor())...),
 				},
 			},
 			"min_date": schema.StringAttribute{
@@ -219,7 +247,9 @@ func (r *PackageRuleResource) Read(ctx context.Context, req resource.ReadRequest
 	filter := fmt.Sprintf(`rule_id = %d`, data.Id.ValueInt64())
 	if !data.Source.IsNull() && !data.Source.IsUnknown() && data.Source.ValueString() != "" {
 		filter += fmt.Sprintf(` OR (name = "%s" AND source = "%s" AND tag = "%s")`,
-			data.Name.ValueString(), data.Source.ValueString(), data.Tag.ValueString())
+			data.Name.ValueString(),
+			utils.NormalizeEnum(data.Source.ValueString(), packageSourcePrefix),
+			data.Tag.ValueString())
 	}
 
 	ret, err := r.client.ListPackageRules(ctx, apipb.ListPackageRulesRequest_builder{
@@ -243,7 +273,7 @@ func (r *PackageRuleResource) Read(ctx context.Context, req resource.ReadRequest
 	rule := ret.GetRules()[0]
 	data.Id = types.Int64Value(rule.GetRuleId())
 	data.Tag = types.StringValue(rule.GetTag())
-	data.Source = types.StringValue(rule.GetSource().String())
+	data.Source = types.StringValue(utils.MatchEnumForm(data.Source.ValueString(), rule.GetSource().String(), packageSourcePrefix))
 	data.Name = types.StringValue(rule.GetName())
 	data.Policy = types.StringValue(rule.GetPolicy().String())
 	data.RuleType = types.StringValue(rule.GetRuleType().String())
@@ -267,7 +297,7 @@ func (r *PackageRuleResource) Read(ctx context.Context, req resource.ReadRequest
 
 // buildPackageRule builds the (upsert) PackageRule from the model.
 func buildPackageRule(data PackageRuleResourceModel, diags *diag.Diagnostics) *apipb.PackageRule {
-	source := apipb.PackageSource_value[data.Source.ValueString()]
+	source := apipb.PackageSource_value[utils.NormalizeEnum(data.Source.ValueString(), packageSourcePrefix)]
 	policy := apipb.Policy_value[data.Policy.ValueString()]
 	ruleType := apipb.RuleType_value[data.RuleType.ValueString()]
 
@@ -432,7 +462,7 @@ func (r *PackageRuleResource) List(ctx context.Context, req list.ListRequest, st
 				model := PackageRuleResourceModel{
 					Id:       types.Int64Value(rule.GetRuleId()),
 					Tag:      types.StringValue(rule.GetTag()),
-					Source:   types.StringValue(rule.GetSource().String()),
+					Source:   types.StringValue(utils.ShortEnum(rule.GetSource().String(), packageSourcePrefix)),
 					Name:     types.StringValue(rule.GetName()),
 					Policy:   types.StringValue(rule.GetPolicy().String()),
 					RuleType: types.StringValue(rule.GetRuleType().String()),
