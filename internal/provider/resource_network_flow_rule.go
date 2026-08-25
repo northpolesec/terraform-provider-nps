@@ -38,6 +38,14 @@ var _ resource.ResourceWithConfigValidators = &NetworkFlowRuleResource{}
 var _ list.ListResource = &NetworkFlowRuleResource{}
 var _ list.ListResourceWithConfigure = &NetworkFlowRuleResource{}
 
+// nfActionPrefix and nfDirectionPrefix are stripped from the action and
+// direction enum values in HCL; the prefixed spellings are deprecated
+// aliases during a compatibility window.
+const (
+	nfActionPrefix    = "NETWORK_FLOW_RULE_ACTION_"
+	nfDirectionPrefix = "NETWORK_FLOW_DIRECTION_"
+)
+
 func NewNetworkFlowRuleResource() resource.Resource {
 	return &NetworkFlowRuleResource{}
 }
@@ -122,19 +130,27 @@ func (r *NetworkFlowRuleResource) Schema(ctx context.Context, req resource.Schem
 				},
 			},
 			"action": schema.StringAttribute{
-				Description:         "The action to take on network flows matching this rule. The possible values are: NETWORK_FLOW_RULE_ACTION_ALLOW, NETWORK_FLOW_RULE_ACTION_DENY, NETWORK_FLOW_RULE_ACTION_SILENT_DENY, NETWORK_FLOW_RULE_ACTION_AUDIT.",
-				MarkdownDescription: "The action to take on network flows matching this rule. The possible values are: `NETWORK_FLOW_RULE_ACTION_ALLOW`, `NETWORK_FLOW_RULE_ACTION_DENY`, `NETWORK_FLOW_RULE_ACTION_SILENT_DENY`, `NETWORK_FLOW_RULE_ACTION_AUDIT`.",
+				Description:         "The action to take on network flows matching this rule. The possible values are: ALLOW, DENY, SILENT_DENY, and AUDIT. The NETWORK_FLOW_RULE_ACTION_-prefixed spellings are deprecated aliases accepted for backwards compatibility.",
+				MarkdownDescription: "The action to take on network flows matching this rule. The possible values are: `ALLOW`, `DENY`, `SILENT_DENY`, and `AUDIT`. The `NETWORK_FLOW_RULE_ACTION_`-prefixed spellings are deprecated aliases accepted for backwards compatibility.",
 				Required:            true,
 				Validators: []validator.String{
-					stringvalidator.OneOf(utils.ProtoEnumValidValues(apipb.NetworkFlowRuleAction(0).Descriptor())...),
+					stringvalidator.OneOf(utils.ProtoEnumAcceptedValues(apipb.NetworkFlowRuleAction(0).Descriptor(), nfActionPrefix)...),
+				},
+				// Suppresses spelling-only diffs between the bare and prefixed forms.
+				PlanModifiers: []planmodifier.String{
+					enumForm(nfActionPrefix),
 				},
 			},
 			"direction": schema.StringAttribute{
-				Description:         "The direction of network flows this rule applies to, relative to the host. The possible values are: NETWORK_FLOW_DIRECTION_ANY, NETWORK_FLOW_DIRECTION_OUTGOING, NETWORK_FLOW_DIRECTION_INCOMING.",
-				MarkdownDescription: "The direction of network flows this rule applies to, relative to the host. The possible values are: `NETWORK_FLOW_DIRECTION_ANY`, `NETWORK_FLOW_DIRECTION_OUTGOING`, `NETWORK_FLOW_DIRECTION_INCOMING`.",
+				Description:         "The direction of network flows this rule applies to, relative to the host. The possible values are: ANY, OUTGOING, and INCOMING. The NETWORK_FLOW_DIRECTION_-prefixed spellings are deprecated aliases accepted for backwards compatibility.",
+				MarkdownDescription: "The direction of network flows this rule applies to, relative to the host. The possible values are: `ANY`, `OUTGOING`, and `INCOMING`. The `NETWORK_FLOW_DIRECTION_`-prefixed spellings are deprecated aliases accepted for backwards compatibility.",
 				Required:            true,
 				Validators: []validator.String{
-					stringvalidator.OneOf(utils.ProtoEnumValidValues(apipb.NetworkFlowDirection(0).Descriptor())...),
+					stringvalidator.OneOf(utils.ProtoEnumAcceptedValues(apipb.NetworkFlowDirection(0).Descriptor(), nfDirectionPrefix)...),
+				},
+				// Suppresses spelling-only diffs between the bare and prefixed forms.
+				PlanModifiers: []planmodifier.String{
+					enumForm(nfDirectionPrefix),
 				},
 			},
 			"priority": schema.BoolAttribute{
@@ -344,8 +360,8 @@ func (r *NetworkFlowRuleResource) Read(ctx context.Context, req resource.ReadReq
 	data.Id = types.Int64Value(rule.GetRuleId())
 	data.Tag = types.StringValue(rule.GetTag())
 	data.Name = types.StringValue(rule.GetName())
-	data.Action = types.StringValue(rule.GetAction().String())
-	data.Direction = types.StringValue(rule.GetDirection().String())
+	data.Action = types.StringValue(utils.MatchEnumForm(data.Action.ValueString(), rule.GetAction().String(), nfActionPrefix))
+	data.Direction = types.StringValue(utils.MatchEnumForm(data.Direction.ValueString(), rule.GetDirection().String(), nfDirectionPrefix))
 
 	// precedence_hint oneof: only one arm is ever set.
 	data.Priority = types.BoolNull()
@@ -415,8 +431,8 @@ func (r *NetworkFlowRuleResource) Read(ctx context.Context, req resource.ReadReq
 
 // buildNetworkFlowRule builds the (upsert) NetworkFlowRule from the model.
 func buildNetworkFlowRule(ctx context.Context, data NetworkFlowRuleResourceModel, diags *diag.Diagnostics) *apipb.NetworkFlowRule {
-	action := apipb.NetworkFlowRuleAction(apipb.NetworkFlowRuleAction_value[data.Action.ValueString()])
-	direction := apipb.NetworkFlowDirection(apipb.NetworkFlowDirection_value[data.Direction.ValueString()])
+	action := apipb.NetworkFlowRuleAction(apipb.NetworkFlowRuleAction_value[utils.NormalizeEnum(data.Action.ValueString(), nfActionPrefix)])
+	direction := apipb.NetworkFlowDirection(apipb.NetworkFlowDirection_value[utils.NormalizeEnum(data.Direction.ValueString(), nfDirectionPrefix)])
 
 	builder := apipb.NetworkFlowRule_builder{
 		Tag:       data.Tag.ValueString(),
@@ -607,8 +623,8 @@ func (r *NetworkFlowRuleResource) List(ctx context.Context, req list.ListRequest
 					Id:                types.Int64Value(rule.GetRuleId()),
 					Tag:               types.StringValue(rule.GetTag()),
 					Name:              types.StringValue(rule.GetName()),
-					Action:            types.StringValue(rule.GetAction().String()),
-					Direction:         types.StringValue(rule.GetDirection().String()),
+					Action:            types.StringValue(utils.ShortEnum(rule.GetAction().String(), nfActionPrefix)),
+					Direction:         types.StringValue(utils.ShortEnum(rule.GetDirection().String(), nfDirectionPrefix)),
 					Priority:          types.BoolNull(),
 					Rank:              types.Int64Null(),
 					ProcessCdHashes:   toListOrNull(rule.GetProcessCdHashes()),
