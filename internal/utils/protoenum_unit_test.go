@@ -52,3 +52,69 @@ func TestProtoEnumValidValuesExcludesSentinel(t *testing.T) {
 		})
 	}
 }
+
+func TestNormalizeEnum(t *testing.T) {
+	tests := []struct{ in, prefix, want string }{
+		{"HOMEBREW", "PACKAGE_SOURCE_", "PACKAGE_SOURCE_HOMEBREW"},
+		{"PACKAGE_SOURCE_HOMEBREW", "PACKAGE_SOURCE_", "PACKAGE_SOURCE_HOMEBREW"},
+		{"", "PACKAGE_SOURCE_", ""},
+	}
+	for _, tt := range tests {
+		if got := NormalizeEnum(tt.in, tt.prefix); got != tt.want {
+			t.Errorf("NormalizeEnum(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestShortEnum(t *testing.T) {
+	tests := []struct{ in, prefix, want string }{
+		{"PACKAGE_SOURCE_HOMEBREW", "PACKAGE_SOURCE_", "HOMEBREW"},
+		{"HOMEBREW", "PACKAGE_SOURCE_", "HOMEBREW"},
+		{"", "PACKAGE_SOURCE_", ""},
+	}
+	for _, tt := range tests {
+		if got := ShortEnum(tt.in, tt.prefix); got != tt.want {
+			t.Errorf("ShortEnum(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+// TestMatchEnumForm guards the refresh behavior: Read keeps the spelling the
+// state already uses when the value is unchanged, so upgrades never print
+// "changed outside of Terraform" over spelling alone. New values (imports,
+// list results, real changes) come back in the short canonical form.
+func TestMatchEnumForm(t *testing.T) {
+	tests := []struct{ name, prior, fresh, want string }{
+		{"long prior keeps long", "PACKAGE_SOURCE_HOMEBREW", "PACKAGE_SOURCE_HOMEBREW", "PACKAGE_SOURCE_HOMEBREW"},
+		{"short prior keeps short", "HOMEBREW", "PACKAGE_SOURCE_HOMEBREW", "HOMEBREW"},
+		{"empty prior (import) goes short", "", "PACKAGE_SOURCE_HOMEBREW", "HOMEBREW"},
+		{"real change goes short", "NPM", "PACKAGE_SOURCE_HOMEBREW", "HOMEBREW"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := MatchEnumForm(tt.prior, tt.fresh, "PACKAGE_SOURCE_"); got != tt.want {
+				t.Errorf("MatchEnumForm(%q, %q) = %q, want %q", tt.prior, tt.fresh, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestProtoEnumPrefixedValueLists(t *testing.T) {
+	enum := apipb.PackageSource(0).Descriptor()
+	long := ProtoEnumValidValues(enum)
+	short := ProtoEnumShortValues(enum, "PACKAGE_SOURCE_")
+	accepted := ProtoEnumAcceptedValues(enum, "PACKAGE_SOURCE_")
+
+	if len(short) != len(long) {
+		t.Fatalf("short list len = %d, want %d", len(short), len(long))
+	}
+	if !slices.Contains(short, "HOMEBREW") || slices.Contains(short, "PACKAGE_SOURCE_HOMEBREW") {
+		t.Errorf("short values = %v, want bare names only", short)
+	}
+	if len(accepted) != 2*len(long) {
+		t.Fatalf("accepted list len = %d, want %d", len(accepted), 2*len(long))
+	}
+	if !slices.Contains(accepted, "HOMEBREW") || !slices.Contains(accepted, "PACKAGE_SOURCE_HOMEBREW") {
+		t.Errorf("accepted values = %v, want both spellings", accepted)
+	}
+}
