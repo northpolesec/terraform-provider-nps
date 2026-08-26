@@ -191,7 +191,7 @@ func TestSignalUpdateUpsertsAndNeverDeletes(t *testing.T) {
 	r := &SignalResource{client: fake}
 
 	plan := testSignalModel()
-	plan.Severity = types.StringValue("SEVERITY_CRITICAL") // non-key change
+	plan.Severity = types.StringValue("CRITICAL") // non-key change
 
 	resp := callSignalUpdate(t, r, plan)
 	if resp.Diagnostics.HasError() {
@@ -228,7 +228,7 @@ func TestUpsertSignalPropagatesFields(t *testing.T) {
 		Name:        types.StringValue("CRED-007"),
 		Tag:         types.StringValue("engineering"),
 		Description: types.StringValue("cookie theft"),
-		Severity:    types.StringValue("SEVERITY_CRITICAL"),
+		Severity:    types.StringValue("CRITICAL"),
 		Expression:  types.StringValue("event.file.path == '/x'"),
 		Disabled:    types.BoolValue(true),
 		Labels:      types.SetValueMust(types.StringType, []attr.Value{types.StringValue("cred"), types.StringValue("theft")}),

@@ -51,8 +51,8 @@ func testNetworkFlowRuleDeleteModel() NetworkFlowRuleResourceModel {
 	return NetworkFlowRuleResourceModel{
 		Tag:               types.StringValue("global"),
 		Name:              types.StringValue("test-rule"),
-		Action:            types.StringValue("NETWORK_FLOW_RULE_ACTION_DENY"),
-		Direction:         types.StringValue("NETWORK_FLOW_DIRECTION_OUTGOING"),
+		Action:            types.StringValue("DENY"),
+		Direction:         types.StringValue("OUTGOING"),
 		Priority:          types.BoolNull(),
 		Rank:              types.Int64Null(),
 		ProcessCdHashes:   types.ListNull(types.StringType),
@@ -96,8 +96,8 @@ func TestAccNetworkFlowRule(t *testing.T) {
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("nps_workshop_network_flow_rule.test", "name", "TestRule1"),
 					resource.TestCheckResourceAttr("nps_workshop_network_flow_rule.test", "tag", "global"),
-					resource.TestCheckResourceAttr("nps_workshop_network_flow_rule.test", "action", "NETWORK_FLOW_RULE_ACTION_DENY"),
-					resource.TestCheckResourceAttr("nps_workshop_network_flow_rule.test", "direction", "NETWORK_FLOW_DIRECTION_OUTGOING"),
+					resource.TestCheckResourceAttr("nps_workshop_network_flow_rule.test", "action", "DENY"),
+					resource.TestCheckResourceAttr("nps_workshop_network_flow_rule.test", "direction", "OUTGOING"),
 					resource.TestCheckResourceAttr("nps_workshop_network_flow_rule.test", "ports.0.low", "443"),
 					resource.TestCheckResourceAttr("nps_workshop_network_flow_rule.test", "ports.0.high", "443"),
 				),
@@ -122,8 +122,8 @@ provider "nps" {
 resource "nps_workshop_network_flow_rule" "test" {
   name      = %[1]q
   tag       = %[2]q
-  action    = "NETWORK_FLOW_RULE_ACTION_DENY"
-  direction = "NETWORK_FLOW_DIRECTION_OUTGOING"
+  action    = "DENY"
+  direction = "OUTGOING"
 
   process_signing_ids = [
     "EQHXZ8M8AV:com.google.Chrome",

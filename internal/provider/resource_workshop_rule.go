@@ -130,8 +130,8 @@ func (r *RuleResource) Metadata(ctx context.Context, req resource.MetadataReques
 
 func (r *RuleResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description:         "The nps_workshop_rule resource manages Rules. Management of rules requires the read:rules and write:rules permissions. Changing identifier, rule_type, or tag forces replacement; add a create_before_destroy lifecycle block to avoid a window where the rule does not exist.",
-		MarkdownDescription: "The `nps_workshop_rule` resource manages Rules.\n\nManagement of rules requires the `read:rules` and `write:rules` permissions.\n\nUpdates to non-key fields (such as `policy` or `comment`) are applied atomically in place. Changing the rule's natural key (`identifier`, `rule_type`, or `tag`) forces the rule to be replaced: by default Terraform destroys the old rule before creating the new one, leaving a brief window with no rule in place. To avoid that window, add a `create_before_destroy` lifecycle block:\n\n```hcl\nresource \"nps_workshop_rule\" \"example\" {\n  # ...\n  lifecycle {\n    create_before_destroy = true\n  }\n}\n```",
+		Description:         "The nps_workshop_rule resource manages rules. You need the read:rules and write:rules permissions. Changing policy or comment updates the existing rule. Changing identifier or rule_type replaces it with a rule for a different binary, certificate, or signing identity. That's a different target, so hosts don't need both rules at once. Changing tag alone moves the same rule to a different host group. Terraform destroys the old rule first, so neither tag has it until the new one is created. Set create_before_destroy if you want the new tag to have the rule before the old tag loses it.",
+		MarkdownDescription: "The `nps_workshop_rule` resource manages rules.\n\nYou need the `read:rules` and `write:rules` permissions.\n\nChanging `policy` or `comment` updates the existing rule. Changing `identifier` or `rule_type` replaces it with a rule for a different binary, certificate, or signing identity. That's a different target, so hosts don't need both rules at once. Changing `tag` alone moves the same rule to a different host group. Terraform destroys the old rule first, so neither tag has it until the new one is created. Set `create_before_destroy` if you want the new tag to have the rule before the old tag loses it.",
 
 		Attributes: map[string]schema.Attribute{
 			"identifier": schema.StringAttribute{
@@ -150,7 +150,7 @@ func (r *RuleResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 				MarkdownDescription: "The type of this rule. The possible values are: `BINARY`, `CERTIFICATE`, `TEAMID`, `SIGNINGID`, and `CDHASH`.",
 				Required:            true,
 				Validators: []validator.String{
-					stringvalidator.OneOf(utils.ProtoEnumToList(apipb.RuleType(0).Descriptor())...),
+					stringvalidator.OneOf(utils.ProtoEnumValidValues(apipb.RuleType(0).Descriptor())...),
 				},
 				// Part of the natural key; see identifier.
 				PlanModifiers: []planmodifier.String{
@@ -158,11 +158,11 @@ func (r *RuleResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 				},
 			},
 			"policy": schema.StringAttribute{
-				Description:         "The policy for this rule. The possible values are: ALLOWLIST, ALLOWLIST_COMPILER, BLOCKLIST, SILENT_BLOCKLIST, CEL, and SEATBELT.",
-				MarkdownDescription: "The policy for this rule. The possible values are: `ALLOWLIST`, `ALLOWLIST_COMPILER`, `BLOCKLIST`, `SILENT_BLOCKLIST`, `CEL`, and `SEATBELT`.",
+				Description:         "The policy for this rule. The possible values are: ALLOWLIST, ALLOWLIST_COMPILER, BLOCKLIST, SILENT_BLOCKLIST, SILENT_GUI_BLOCKLIST, SILENT_TTY_BLOCKLIST, CEL, and SEATBELT.",
+				MarkdownDescription: "The policy for this rule. The possible values are: `ALLOWLIST`, `ALLOWLIST_COMPILER`, `BLOCKLIST`, `SILENT_BLOCKLIST`, `SILENT_GUI_BLOCKLIST`, `SILENT_TTY_BLOCKLIST`, `CEL`, and `SEATBELT`.",
 				Required:            true,
 				Validators: []validator.String{
-					stringvalidator.OneOf(utils.ProtoEnumToList(apipb.Policy(0).Descriptor())...),
+					stringvalidator.OneOf(utils.ProtoEnumValidValues(apipb.Policy(0).Descriptor())...),
 				},
 			},
 			"block_reason": schema.StringAttribute{

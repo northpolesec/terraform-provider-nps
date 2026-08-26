@@ -81,7 +81,7 @@ Titles are cosmetic pack metadata and can change upstream. Because the title is 
 
 ## Import
 
-Import is supported using the following syntax:
+The [`terraform import` command](https://developer.hashicorp.com/terraform/cli/commands/import) can be used, for example:
 
 ```shell
 terraform import nps_workshop_rule_pack_subscription.cryptojacking 42
