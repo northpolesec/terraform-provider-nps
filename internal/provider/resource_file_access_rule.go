@@ -86,6 +86,19 @@ type FileAccessRuleResourceModel struct {
 	Id types.Int64 `tfsdk:"id"`
 }
 
+func clearFileAccessRuleOptionalState(data *FileAccessRuleResourceModel) {
+	data.BlockMessage = normalizeAbsentOptionalString(data.BlockMessage)
+	data.EventDetailUrl = normalizeAbsentOptionalString(data.EventDetailUrl)
+	data.EventDetailText = normalizeAbsentOptionalString(data.EventDetailText)
+	data.PathLiterals = normalizeAbsentOptionalList(data.PathLiterals, types.StringType)
+	data.PathPrefixes = normalizeAbsentOptionalList(data.PathPrefixes, types.StringType)
+	data.ProcessBinaryPaths = normalizeAbsentOptionalList(data.ProcessBinaryPaths, types.StringType)
+	data.ProcessCdHashes = normalizeAbsentOptionalList(data.ProcessCdHashes, types.StringType)
+	data.ProcessSigningIds = normalizeAbsentOptionalList(data.ProcessSigningIds, types.StringType)
+	data.ProcessCertificateSha256s = normalizeAbsentOptionalList(data.ProcessCertificateSha256s, types.StringType)
+	data.ProcessTeamIds = normalizeAbsentOptionalList(data.ProcessTeamIds, types.StringType)
+}
+
 func (r *FileAccessRuleResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_workshop_file_access_rule"
 	// The rule ID (used as the identity) changes on every upsert, including
@@ -341,6 +354,7 @@ func (r *FileAccessRuleResource) Read(ctx context.Context, req resource.ReadRequ
 	// Now that we've found the rule, overwrite the state data with the actual
 	// values retrieved via the API.
 	rule := ret.GetRules()[0]
+	clearFileAccessRuleOptionalState(&data)
 	data.Id = types.Int64Value(rule.GetRuleId())
 	data.Tag = types.StringValue(rule.GetTag())
 	data.Name = types.StringValue(rule.GetName())
