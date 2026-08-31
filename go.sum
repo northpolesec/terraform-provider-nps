@@ -4,8 +4,8 @@ buf.build/gen/go/northpolesec/protos/protocolbuffers/go v1.36.12-20260826173735-
 buf.build/gen/go/northpolesec/protos/protocolbuffers/go v1.36.12-20260826173735-eb9d9b217b64.1/go.mod h1:zG4BsQXlYqt56Eo/qMDy6CSMr2qSsUIoqaCqPOqPnyI=
 buf.build/gen/go/northpolesec/workshop-api/grpc/go v1.6.2-20260824162938-d6b9964d3e99.1 h1:EYYzh+UEO5/xEgwIxRvnBUqzG3WYUVHcfgFtt2fHh5M=
 buf.build/gen/go/northpolesec/workshop-api/grpc/go v1.6.2-20260824162938-d6b9964d3e99.1/go.mod h1:4neM8m57QG0jYtwADv23XfnXQ5LreilaKjcGX1Yvoyg=
-buf.build/gen/go/northpolesec/workshop-api/protocolbuffers/go v1.36.12-20260824162938-d6b9964d3e99.1 h1:6uOvsYxYeZc6FP+8ypuoZ2N7iliW+pbQcGpXJn9kYMk=
-buf.build/gen/go/northpolesec/workshop-api/protocolbuffers/go v1.36.12-20260824162938-d6b9964d3e99.1/go.mod h1:rWqCAE8zC8tIzC/n5uM93KLT/o8CvFKLau1eiPBdG6Q=
+buf.build/gen/go/northpolesec/workshop-api/protocolbuffers/go v1.36.12-20260825161820-4cd1e1dec867.1 h1:hKHES+lvXCvjNzV5DsD7PQpWYrna/lTgWz+Q8LrSTWA=
+buf.build/gen/go/northpolesec/workshop-api/protocolbuffers/go v1.36.12-20260825161820-4cd1e1dec867.1/go.mod h1:rWqCAE8zC8tIzC/n5uM93KLT/o8CvFKLau1eiPBdG6Q=
 dario.cat/mergo v1.0.0 h1:AGCNq9Evsj31mOgNPcLyXc+4PNABt905YmuqPYYpBWk=
 dario.cat/mergo v1.0.0/go.mod h1:uNxQE+84aUszobStD9th8a29P2fMDhsBdgRYvZOxGmk=
 github.com/Microsoft/go-winio v0.6.2 h1:F2VQgta7ecxGYO8k3ZZz3RS8fVIXVxONVUPlNERoyfY=
