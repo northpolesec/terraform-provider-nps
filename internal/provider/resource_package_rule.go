@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
@@ -86,6 +87,14 @@ type PackageRuleResourceModel struct {
 	MinDate       types.String `tfsdk:"min_date"`
 	MaxDate       types.String `tfsdk:"max_date"`
 	VersionRegexp types.String `tfsdk:"version_regexp"`
+	VersionCEL    types.String `tfsdk:"version_cel"`
+	BinaryCEL     types.String `tfsdk:"binary_cel"`
+
+	BlockReason            types.String `tfsdk:"block_reason"`
+	CELExpr                types.String `tfsdk:"cel_expr"`
+	CustomMsg              types.String `tfsdk:"custom_msg"`
+	CustomURL              types.String `tfsdk:"custom_url"`
+	EventDetailButtonLabel types.String `tfsdk:"event_detail_button_label"`
 
 	Id types.Int64 `tfsdk:"id"`
 }
@@ -168,6 +177,53 @@ func (r *PackageRuleResource) Schema(ctx context.Context, req resource.SchemaReq
 				MarkdownDescription: "Optional: Regex to filter version strings.",
 				Optional:            true,
 			},
+			"version_cel": schema.StringAttribute{
+				Description:         "Optional: CEL expression selecting which package versions this rule covers. It is evaluated during materialization and ANDed with min_date, max_date, and version_regexp. Variables: version, released_at, target, latest_released_at, version_rank, and version_count. Must return a boolean. This selects versions; cel_expr is the execution-time policy attached to the rules that are created.",
+				MarkdownDescription: "Optional: CEL expression selecting which package versions this rule covers. It is evaluated during materialization and ANDed with `min_date`, `max_date`, and `version_regexp`. Variables: `version`, `released_at`, `target`, `latest_released_at`, `version_rank`, and `version_count`. Must return a boolean. This selects versions; `cel_expr` is the execution-time policy attached to the rules that are created.",
+				Optional:            true,
+			},
+			"binary_cel": schema.StringAttribute{
+				Description:         "Optional: CEL expression selecting which binaries within a matched version this rule covers. Variables: path, hash, and cdhash. Must return a boolean. Only supported for the BINARY and CDHASH rule types; the other types emit a single identifier that no per-binary path can select against.",
+				MarkdownDescription: "Optional: CEL expression selecting which binaries within a matched version this rule covers. Variables: `path`, `hash`, and `cdhash`. Must return a boolean. Only supported for the `BINARY` and `CDHASH` rule types; the other types emit a single identifier that no per-binary path can select against.",
+				Optional:            true,
+			},
+			"block_reason": schema.StringAttribute{
+				Description:         "The block reason for the rules created from this package rule. The possible values are: POLICY and MALICIOUS. For blocklist-family policies an unset value defaults to POLICY; leave it unset for non-blocklist policies, which cannot have a block reason. The BLOCK_REASON_-prefixed spellings are deprecated aliases accepted for backwards compatibility.",
+				MarkdownDescription: "The block reason for the rules created from this package rule. The possible values are: `POLICY` and `MALICIOUS`. For blocklist-family policies an unset value defaults to `POLICY`; leave it unset for non-blocklist policies, which cannot have a block reason. The `BLOCK_REASON_`-prefixed spellings are deprecated aliases accepted for backwards compatibility.",
+				Optional:            true,
+				// Computed + blockReasonDefault: the server defaults an unset
+				// block_reason to BLOCK_REASON_POLICY for blocklist policies, so we
+				// resolve the same default at plan time to avoid a perpetual diff.
+				Computed: true,
+				Validators: []validator.String{
+					stringvalidator.OneOf(blockReasonAcceptedValues()...),
+				},
+				PlanModifiers: []planmodifier.String{
+					// enumForm first; see the same attribute on nps_workshop_rule.
+					enumForm(blockReasonPrefix),
+					blockReasonDefault{},
+				},
+			},
+			"cel_expr": schema.StringAttribute{
+				Description:         "A CEL expression to attach to the rules created from this package rule. Required when the policy is CEL, and rejected otherwise.",
+				MarkdownDescription: "A CEL expression to attach to the rules created from this package rule. Required when the policy is `CEL`, and rejected otherwise.",
+				Optional:            true,
+			},
+			"custom_msg": schema.StringAttribute{
+				Description:         "A custom message to display to the user when a rule created from this package rule causes Santa to block the execution.",
+				MarkdownDescription: "A custom message to display to the user when a rule created from this package rule causes Santa to block the execution.",
+				Optional:            true,
+			},
+			"custom_url": schema.StringAttribute{
+				Description:         "A custom URL to redirect the user to when a rule created from this package rule causes Santa to block the execution. Setting a custom URL will override the EventDetailURL used by the Open button.",
+				MarkdownDescription: "A custom URL to redirect the user to when a rule created from this package rule causes Santa to block the execution. Setting a custom URL will override the `EventDetailURL` used by the Open button.",
+				Optional:            true,
+			},
+			"event_detail_button_label": schema.StringAttribute{
+				Description:         "A custom label for the Open button in the Santa UI.",
+				MarkdownDescription: "A custom label for the Open button in the Santa UI.",
+				Optional:            true,
+			},
 
 			// Computed value, returned from Create. The ID changes on every
 			// upsert (including in-place updates), so it is intentionally left
@@ -178,6 +234,32 @@ func (r *PackageRuleResource) Schema(ctx context.Context, req resource.SchemaReq
 				MarkdownDescription: "The server-generated ID of this package rule. This ID is reassigned on every upsert, including in-place updates, so it must not be relied on as a stable identifier across applies.",
 			},
 		},
+	}
+}
+
+// ConfigValidators mirrors the server-side field combination checks so a bad
+// config fails at plan time rather than mid-apply. The CEL expressions
+// themselves are only validated by the server.
+func (r *PackageRuleResource) ConfigValidators(ctx context.Context) []resource.ConfigValidator {
+	return []resource.ConfigValidator{
+		utils.ConfigValidatorFunc("Validate package rule field combinations", func(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
+			var data PackageRuleResourceModel
+			resp.Diagnostics.Append(req.Config.Get(ctx, &data)...)
+
+			policy := data.Policy.ValueString()
+			if policy == "CEL" && !data.CELExpr.IsUnknown() && data.CELExpr.ValueString() == "" {
+				resp.Diagnostics.AddAttributeError(path.Root("cel_expr"), "CEL expression is required", "cel_expr is required when policy is set to CEL")
+			}
+			if policy != "CEL" && policy != "" && data.CELExpr.ValueString() != "" {
+				resp.Diagnostics.AddAttributeError(path.Root("cel_expr"), "CEL expression is not allowed", "cel_expr can only be set when policy is set to CEL")
+			}
+			if data.BlockReason.ValueString() != "" && !strings.Contains(policy, "BLOCKLIST") && policy != "" {
+				resp.Diagnostics.AddAttributeError(path.Root("block_reason"), "Block reason is only valid for blocklist policies", "")
+			}
+			if ruleType := data.RuleType.ValueString(); data.BinaryCEL.ValueString() != "" && ruleType != "BINARY" && ruleType != "CDHASH" && ruleType != "" {
+				resp.Diagnostics.AddAttributeError(path.Root("binary_cel"), "Binary CEL is not supported for this rule type", "binary_cel is only supported for the BINARY and CDHASH rule types")
+			}
+		}),
 	}
 }
 
@@ -270,7 +352,21 @@ func (r *PackageRuleResource) Read(ctx context.Context, req resource.ReadRequest
 
 	// Now that we've found the rule, overwrite the state data with the actual
 	// values retrieved via the API.
-	rule := ret.GetRules()[0]
+	packageRuleToModel(ret.GetRules()[0], &data)
+
+	// Set the identity
+	resp.Diagnostics.Append(resp.Identity.Set(ctx, PackageRuleIdentityModel{Id: data.Id})...)
+
+	// Save updated data into Terraform state
+	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+}
+
+// packageRuleToModel overwrites the model with the values the server returned.
+// The optional fields are only copied back when set, so an unset field keeps
+// whatever the model already held (null for a fresh model). data.Source is used
+// as the prior spelling, keeping a deprecated PACKAGE_SOURCE_-prefixed config
+// from churning in state.
+func packageRuleToModel(rule *apipb.PackageRule, data *PackageRuleResourceModel) {
 	data.Id = types.Int64Value(rule.GetRuleId())
 	data.Tag = types.StringValue(rule.GetTag())
 	data.Source = types.StringValue(utils.MatchEnumForm(data.Source.ValueString(), rule.GetSource().String(), packageSourcePrefix))
@@ -278,21 +374,31 @@ func (r *PackageRuleResource) Read(ctx context.Context, req resource.ReadRequest
 	data.Policy = types.StringValue(rule.GetPolicy().String())
 	data.RuleType = types.StringValue(rule.GetRuleType().String())
 
-	if rule.GetVersionRegexp() != "" {
-		data.VersionRegexp = types.StringValue(rule.GetVersionRegexp())
-	}
 	if rule.HasMinDate() {
 		data.MinDate = types.StringValue(rule.GetMinDate().AsTime().Format(time.RFC3339))
 	}
 	if rule.HasMaxDate() {
 		data.MaxDate = types.StringValue(rule.GetMaxDate().AsTime().Format(time.RFC3339))
 	}
-
-	// Set the identity
-	resp.Diagnostics.Append(resp.Identity.Set(ctx, PackageRuleIdentityModel{Id: data.Id})...)
-
-	// Save updated data into Terraform state
-	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+	if rule.GetBlockReason() != apipb.Rule_BLOCK_REASON_UNSPECIFIED {
+		data.BlockReason = types.StringValue(utils.MatchEnumForm(data.BlockReason.ValueString(), rule.GetBlockReason().String(), blockReasonPrefix))
+	}
+	for _, f := range []struct {
+		val  string
+		dest *types.String
+	}{
+		{rule.GetVersionRegexp(), &data.VersionRegexp},
+		{rule.GetVersionCel(), &data.VersionCEL},
+		{rule.GetBinaryCel(), &data.BinaryCEL},
+		{rule.GetCelExpr(), &data.CELExpr},
+		{rule.GetCustomMsg(), &data.CustomMsg},
+		{rule.GetCustomUrl(), &data.CustomURL},
+		{rule.GetEventDetailButtonLabel(), &data.EventDetailButtonLabel},
+	} {
+		if f.val != "" {
+			*f.dest = types.StringValue(f.val)
+		}
+	}
 }
 
 // buildPackageRule builds the (upsert) PackageRule from the model.
@@ -302,12 +408,22 @@ func buildPackageRule(data PackageRuleResourceModel, diags *diag.Diagnostics) *a
 	ruleType := apipb.RuleType_value[data.RuleType.ValueString()]
 
 	builder := apipb.PackageRule_builder{
-		Tag:           data.Tag.ValueString(),
-		Source:        apipb.PackageSource(source),
-		Name:          data.Name.ValueString(),
-		Policy:        apipb.Policy(policy),
-		RuleType:      apipb.RuleType(ruleType),
-		VersionRegexp: data.VersionRegexp.ValueString(),
+		Tag:                    data.Tag.ValueString(),
+		Source:                 apipb.PackageSource(source),
+		Name:                   data.Name.ValueString(),
+		Policy:                 apipb.Policy(policy),
+		RuleType:               apipb.RuleType(ruleType),
+		VersionRegexp:          data.VersionRegexp.ValueString(),
+		VersionCel:             data.VersionCEL.ValueString(),
+		BinaryCel:              data.BinaryCEL.ValueString(),
+		CelExpr:                data.CELExpr.ValueString(),
+		CustomMsg:              data.CustomMsg.ValueString(),
+		CustomUrl:              data.CustomURL.ValueString(),
+		EventDetailButtonLabel: data.EventDetailButtonLabel.ValueString(),
+	}
+
+	if br := data.BlockReason.ValueString(); br != "" {
+		builder.BlockReason = apipb.Rule_BlockReason(apipb.Rule_BlockReason_value[utils.NormalizeEnum(br, blockReasonPrefix)])
 	}
 
 	if !data.MinDate.IsNull() && !data.MinDate.IsUnknown() {
@@ -459,24 +575,10 @@ func (r *PackageRuleResource) List(ctx context.Context, req list.ListRequest, st
 			})...)
 
 			if req.IncludeResource {
-				model := PackageRuleResourceModel{
-					Id:       types.Int64Value(rule.GetRuleId()),
-					Tag:      types.StringValue(rule.GetTag()),
-					Source:   types.StringValue(utils.ShortEnum(rule.GetSource().String(), packageSourcePrefix)),
-					Name:     types.StringValue(rule.GetName()),
-					Policy:   types.StringValue(rule.GetPolicy().String()),
-					RuleType: types.StringValue(rule.GetRuleType().String()),
-				}
-
-				if rule.GetVersionRegexp() != "" {
-					model.VersionRegexp = types.StringValue(rule.GetVersionRegexp())
-				}
-				if rule.HasMinDate() {
-					model.MinDate = types.StringValue(rule.GetMinDate().AsTime().Format(time.RFC3339))
-				}
-				if rule.HasMaxDate() {
-					model.MaxDate = types.StringValue(rule.GetMaxDate().AsTime().Format(time.RFC3339))
-				}
+				// A fresh model has a null source, so the short (canonical)
+				// spelling is used.
+				var model PackageRuleResourceModel
+				packageRuleToModel(rule, &model)
 
 				result.Diagnostics.Append(result.Resource.Set(ctx, model)...)
 			}
