@@ -362,10 +362,12 @@ func (r *PackageRuleResource) Read(ctx context.Context, req resource.ReadRequest
 }
 
 // packageRuleToModel overwrites the model with the values the server returned.
-// The optional fields are only copied back when set, so an unset field keeps
-// whatever the model already held (null for a fresh model). data.Source is used
-// as the prior spelling, keeping a deprecated PACKAGE_SOURCE_-prefixed config
-// from churning in state.
+// Every field is assigned, including the optional ones: a field the server no
+// longer reports becomes null so clearing it outside Terraform shows up as
+// drift instead of keeping the stale state value. The prior model values are
+// only consulted for the spelling of the prefixed enums (source, block_reason),
+// so a deprecated PACKAGE_SOURCE_/BLOCK_REASON_-prefixed config does not churn
+// in state.
 func packageRuleToModel(rule *apipb.PackageRule, data *PackageRuleResourceModel) {
 	data.Id = types.Int64Value(rule.GetRuleId())
 	data.Tag = types.StringValue(rule.GetTag())
@@ -374,31 +376,27 @@ func packageRuleToModel(rule *apipb.PackageRule, data *PackageRuleResourceModel)
 	data.Policy = types.StringValue(rule.GetPolicy().String())
 	data.RuleType = types.StringValue(rule.GetRuleType().String())
 
+	data.MinDate = types.StringNull()
 	if rule.HasMinDate() {
 		data.MinDate = types.StringValue(rule.GetMinDate().AsTime().Format(time.RFC3339))
 	}
+	data.MaxDate = types.StringNull()
 	if rule.HasMaxDate() {
 		data.MaxDate = types.StringValue(rule.GetMaxDate().AsTime().Format(time.RFC3339))
 	}
-	if rule.GetBlockReason() != apipb.Rule_BLOCK_REASON_UNSPECIFIED {
+	if rule.GetBlockReason() == apipb.Rule_BLOCK_REASON_UNSPECIFIED {
+		data.BlockReason = types.StringNull()
+	} else {
 		data.BlockReason = types.StringValue(utils.MatchEnumForm(data.BlockReason.ValueString(), rule.GetBlockReason().String(), blockReasonPrefix))
 	}
-	for _, f := range []struct {
-		val  string
-		dest *types.String
-	}{
-		{rule.GetVersionRegexp(), &data.VersionRegexp},
-		{rule.GetVersionCel(), &data.VersionCEL},
-		{rule.GetBinaryCel(), &data.BinaryCEL},
-		{rule.GetCelExpr(), &data.CELExpr},
-		{rule.GetCustomMsg(), &data.CustomMsg},
-		{rule.GetCustomUrl(), &data.CustomURL},
-		{rule.GetEventDetailButtonLabel(), &data.EventDetailButtonLabel},
-	} {
-		if f.val != "" {
-			*f.dest = types.StringValue(f.val)
-		}
-	}
+
+	data.VersionRegexp = emptyStringToNull(rule.GetVersionRegexp())
+	data.VersionCEL = emptyStringToNull(rule.GetVersionCel())
+	data.BinaryCEL = emptyStringToNull(rule.GetBinaryCel())
+	data.CELExpr = emptyStringToNull(rule.GetCelExpr())
+	data.CustomMsg = emptyStringToNull(rule.GetCustomMsg())
+	data.CustomURL = emptyStringToNull(rule.GetCustomUrl())
+	data.EventDetailButtonLabel = emptyStringToNull(rule.GetEventDetailButtonLabel())
 }
 
 // buildPackageRule builds the (upsert) PackageRule from the model.
