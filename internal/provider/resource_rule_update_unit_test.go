@@ -107,10 +107,10 @@ func TestResolveBlockReason(t *testing.T) {
 		policy string
 		want   string // "" means null
 	}{
-		{"BLOCKLIST", "BLOCK_REASON_POLICY"},
-		{"SILENT_BLOCKLIST", "BLOCK_REASON_POLICY"},
-		{"SILENT_GUI_BLOCKLIST", "BLOCK_REASON_POLICY"},
-		{"SILENT_TTY_BLOCKLIST", "BLOCK_REASON_POLICY"},
+		{"BLOCKLIST", "POLICY"},
+		{"SILENT_BLOCKLIST", "POLICY"},
+		{"SILENT_GUI_BLOCKLIST", "POLICY"},
+		{"SILENT_TTY_BLOCKLIST", "POLICY"},
 		{"ALLOWLIST", ""},
 		{"ALLOWLIST_COMPILER", ""},
 		{"SEATBELT", ""},
@@ -171,8 +171,9 @@ func TestUpsertRulePropagatesBlockReason(t *testing.T) {
 		blockReason types.String
 		want        apipb.Rule_BlockReason
 	}{
-		{"defaulted policy", types.StringValue("BLOCK_REASON_POLICY"), apipb.Rule_BLOCK_REASON_POLICY},
-		{"explicit malicious", types.StringValue("BLOCK_REASON_MALICIOUS"), apipb.Rule_BLOCK_REASON_MALICIOUS},
+		{"defaulted policy", types.StringValue("POLICY"), apipb.Rule_BLOCK_REASON_POLICY},
+		{"explicit malicious", types.StringValue("MALICIOUS"), apipb.Rule_BLOCK_REASON_MALICIOUS},
+		{"deprecated long spelling", types.StringValue("BLOCK_REASON_MALICIOUS"), apipb.Rule_BLOCK_REASON_MALICIOUS},
 		{"unset", types.StringNull(), apipb.Rule_BLOCK_REASON_UNSPECIFIED},
 	}
 	for _, c := range cases {
