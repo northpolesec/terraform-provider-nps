@@ -3,39 +3,96 @@
 page_title: "nps_workshop_package_rule Resource - nps"
 subcategory: ""
 description: |-
-  The nps_workshop_package_rule resource manages Package Rules.
-  Package rules sync identifiers from GAL for a package.
-  Management of package rules requires the read:rules and write:rules permissions.
-  Updates to non-key fields (such as policy) are applied atomically in place. Changing the rule's natural key (tag, name, or source) forces the rule to be replaced: by default Terraform destroys the old rule before creating the new one, leaving a brief window with no rule in place. To avoid that window, add a create_before_destroy lifecycle block:
-  
-  resource "nps_workshop_package_rule" "example" {
-    # ...
-    lifecycle {
-      create_before_destroy = true
-    }
-  }
+  The nps_workshop_package_rule resource manages package rules.
+  Package rules sync identifiers from the package catalog.
+  You need the read:rules and write:rules permissions.
+  Changing policy or other non-key fields updates the existing rule. Changing tag, name, or source replaces it. A tag change points the same package at a different host group. A name or source change points the rule at a different package. Deleting a package rule doesn't remove the execution rules it already generated. Those rules stay active on hosts until you remove them separately.
 ---
 
 # nps_workshop_package_rule (Resource)
 
-The `nps_workshop_package_rule` resource manages Package Rules.
+The `nps_workshop_package_rule` resource manages package rules.
 
-Package rules sync identifiers from GAL for a package.
+Package rules sync identifiers from the package catalog.
 
-Management of package rules requires the `read:rules` and `write:rules` permissions.
+You need the `read:rules` and `write:rules` permissions.
 
-Updates to non-key fields (such as `policy`) are applied atomically in place. Changing the rule's natural key (`tag`, `name`, or `source`) forces the rule to be replaced: by default Terraform destroys the old rule before creating the new one, leaving a brief window with no rule in place. To avoid that window, add a `create_before_destroy` lifecycle block:
+Changing `policy` or other non-key fields updates the existing rule. Changing `tag`, `name`, or `source` replaces it. A `tag` change points the same package at a different host group. A `name` or `source` change points the rule at a different package. Deleting a package rule doesn't remove the execution rules it already generated. Those rules stay active on hosts until you remove them separately.
 
-```hcl
-resource "nps_workshop_package_rule" "example" {
-  # ...
-  lifecycle {
-    create_before_destroy = true
-  }
+## Example Usage
+
+```terraform
+# Allowlist a set of Homebrew formulae for the engineering tag. Package rules
+# sync identifiers from the package catalog, so you name the package rather
+# than hashing every binary yourself.
+locals {
+  engineering_formulae = ["wget", "jq", "ripgrep"]
+}
+
+resource "nps_workshop_package_rule" "engineering_homebrew" {
+  for_each = toset(local.engineering_formulae)
+
+  # The tag must already exist in Workshop. It also has no effect until it is
+  # added to nps_workshop_tag_order.
+  tag    = "engineering"
+  source = "HOMEBREW"
+  name   = each.value
+
+  policy = "ALLOWLIST"
+
+  # The broadest type available for the package, falling back to narrower
+  # types when the preferred one is not published.
+  rule_type = "TEAMID"
+}
+
+# Constrain a rule to a version range: only 1.x versions released after
+# 2025-01-01 are covered by this rule.
+resource "nps_workshop_package_rule" "engineering_terraform" {
+  tag    = "engineering"
+  source = "HOMEBREW"
+  name   = "terraform"
+
+  policy    = "ALLOWLIST"
+  rule_type = "TEAMID"
+
+  min_date       = "2025-01-01T00:00:00Z"
+  version_regexp = "^1\\."
+}
+
+# Block a package and tell the user why. Blocklist policies default to a
+# POLICY block reason; set block_reason = "MALICIOUS" to override it.
+resource "nps_workshop_package_rule" "engineering_blocked" {
+  tag    = "engineering"
+  source = "NPM"
+  name   = "left-pad"
+
+  policy    = "BLOCKLIST"
+  rule_type = "SIGNINGID"
+
+  custom_msg                = "This package is not approved. Ask #security."
+  custom_url                = "https://example.com/allowlist-request"
+  event_detail_button_label = "Request access"
+}
+
+# Attach a CEL policy to the created rules, and use the advanced filters to
+# select which versions and binaries the rule covers.
+resource "nps_workshop_package_rule" "engineering_cel" {
+  tag    = "engineering"
+  source = "HOMEBREW"
+  name   = "kubectl"
+
+  policy    = "CEL"
+  rule_type = "BINARY"
+
+  # Evaluated by Santa when a covered binary executes.
+  cel_expr = "target.signing_time >= timestamp('2025-01-01T00:00:00Z') ? ALLOWLIST : BLOCKLIST"
+
+  # Evaluated by Workshop when the rule is materialized: only the three most
+  # recent versions, and only the kubectl binary within them.
+  version_cel = "version_rank < 3"
+  binary_cel  = "path.endsWith('/bin/kubectl')"
 }
 ```
-
-
 
 <!-- schema generated by tfplugindocs -->
 ## Schema
@@ -43,15 +100,22 @@ resource "nps_workshop_package_rule" "example" {
 ### Required
 
 - `name` (String) The package name (e.g., `wget`, `express`).
-- `policy` (String) The policy for execution rules created from this package rule.
+- `policy` (String) The policy for execution rules created from this package rule. The possible values are: `ALLOWLIST`, `ALLOWLIST_COMPILER`, `BLOCKLIST`, `SILENT_BLOCKLIST`, `SILENT_GUI_BLOCKLIST`, `SILENT_TTY_BLOCKLIST`, and `CEL`. `SEATBELT` is not supported on package rules, which have no seatbelt policy field.
 - `rule_type` (String) What type of rule should be created. Uses the broadest available type from GAL, falling back to more specific types if the preferred type isn't available. Only `TEAMID`, `CERTIFICATE`, `SIGNINGID`, `CDHASH`, and `BINARY` are supported.
-- `source` (String) The package source (e.g., `PACKAGE_SOURCE_HOMEBREW`, `PACKAGE_SOURCE_NPM`).
+- `source` (String) The package source. The possible values are: `HOMEBREW`, `HOMEBREW_CASK`, `NPM`, `GITHUB`, `RUST`, `VSCODE`, `TERRAFORM_PLUGIN`, `URL`, and `NIX`. `BAZEL` is reserved for future use and is not yet implemented. The `PACKAGE_SOURCE_`-prefixed spellings are deprecated aliases accepted for backwards compatibility.
 - `tag` (String) The tag for this package rule. The tag determines which hosts this rule will apply to. The tag must already exist in Workshop.
 
 ### Optional
 
+- `binary_cel` (String) Optional: CEL expression selecting which binaries within a matched version this rule covers. Variables: `path`, `hash`, and `cdhash`. Must return a boolean. Only supported for the `BINARY` and `CDHASH` rule types; the other types emit a single identifier that no per-binary path can select against.
+- `block_reason` (String) The block reason for the rules created from this package rule. The possible values are: `POLICY` and `MALICIOUS`. For blocklist-family policies an unset value defaults to `POLICY`; leave it unset for non-blocklist policies, which cannot have a block reason. The `BLOCK_REASON_`-prefixed spellings are deprecated aliases accepted for backwards compatibility.
+- `cel_expr` (String) A CEL expression to attach to the rules created from this package rule. Required when the policy is `CEL`, and rejected otherwise.
+- `custom_msg` (String) A custom message to display to the user when a rule created from this package rule causes Santa to block the execution.
+- `custom_url` (String) A custom URL to redirect the user to when a rule created from this package rule causes Santa to block the execution. Setting a custom URL will override the `EventDetailURL` used by the Open button.
+- `event_detail_button_label` (String) A custom label for the Open button in the Santa UI.
 - `max_date` (String) Optional: Only include versions released before this date. Format: RFC3339 (e.g., `2024-12-31T23:59:59Z`).
 - `min_date` (String) Optional: Only include versions released after this date. Format: RFC3339 (e.g., `2024-01-01T00:00:00Z`).
+- `version_cel` (String) Optional: CEL expression selecting which package versions this rule covers. It is evaluated during materialization and ANDed with `min_date`, `max_date`, and `version_regexp`. Variables: `version`, `released_at`, `target`, `latest_released_at`, `version_rank`, and `version_count`. Must return a boolean. This selects versions; `cel_expr` is the execution-time policy attached to the rules that are created.
 - `version_regexp` (String) Optional: Regex to filter version strings.
 
 ### Read-Only

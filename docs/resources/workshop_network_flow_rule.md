@@ -3,34 +3,18 @@
 page_title: "nps_workshop_network_flow_rule Resource - nps"
 subcategory: ""
 description: |-
-  The nps_workshop_network_flow_rule resource manages Network Flow Rules.
-  Management of network flow rules requires the read:rules and write:rules permissions.
-  Updates to non-key fields are applied atomically in place. Changing the rule's natural key (name or tag) forces the rule to be replaced: by default Terraform destroys the old rule before creating the new one, leaving a brief window with no rule in place. To avoid that window, add a create_before_destroy lifecycle block:
-  
-  resource "nps_workshop_network_flow_rule" "example" {
-    # ...
-    lifecycle {
-      create_before_destroy = true
-    }
-  }
+  The nps_workshop_network_flow_rule resource manages network flow rules.
+  You need the read:rules and write:rules permissions.
+  Changing match criteria or other non-key fields updates the existing rule. Changing name or tag replaces it. Terraform destroys the old rule first, so hosts have no rule until the new one is created. Set create_before_destroy if you're renaming the rule or moving it to another tag.
 ---
 
 # nps_workshop_network_flow_rule (Resource)
 
-The `nps_workshop_network_flow_rule` resource manages Network Flow Rules.
+The `nps_workshop_network_flow_rule` resource manages network flow rules.
 
-Management of network flow rules requires the `read:rules` and `write:rules` permissions.
+You need the `read:rules` and `write:rules` permissions.
 
-Updates to non-key fields are applied atomically in place. Changing the rule's natural key (`name` or `tag`) forces the rule to be replaced: by default Terraform destroys the old rule before creating the new one, leaving a brief window with no rule in place. To avoid that window, add a `create_before_destroy` lifecycle block:
-
-```hcl
-resource "nps_workshop_network_flow_rule" "example" {
-  # ...
-  lifecycle {
-    create_before_destroy = true
-  }
-}
-```
+Changing match criteria or other non-key fields updates the existing rule. Changing `name` or `tag` replaces it. Terraform destroys the old rule first, so hosts have no rule until the new one is created. Set `create_before_destroy` if you're renaming the rule or moving it to another tag.
 
 ## Example Usage
 
@@ -40,8 +24,8 @@ resource "nps_workshop_network_flow_rule" "example" {
 resource "nps_workshop_network_flow_rule" "block_spacemolt" {
   name      = "block-spacemolt"
   tag       = "global"
-  action    = "NETWORK_FLOW_RULE_ACTION_DENY"
-  direction = "NETWORK_FLOW_DIRECTION_OUTGOING"
+  action    = "DENY"
+  direction = "OUTGOING"
 
   process_signing_ids = [
     "Q6L2SF6YDW:com.anthropic.claude-code",
@@ -60,8 +44,8 @@ resource "nps_workshop_network_flow_rule" "block_spacemolt" {
 
 ### Required
 
-- `action` (String) The action to take on network flows matching this rule. The possible values are: `NETWORK_FLOW_RULE_ACTION_ALLOW`, `NETWORK_FLOW_RULE_ACTION_DENY`, `NETWORK_FLOW_RULE_ACTION_SILENT_DENY`, `NETWORK_FLOW_RULE_ACTION_AUDIT`.
-- `direction` (String) The direction of network flows this rule applies to, relative to the host. The possible values are: `NETWORK_FLOW_DIRECTION_ANY`, `NETWORK_FLOW_DIRECTION_OUTGOING`, `NETWORK_FLOW_DIRECTION_INCOMING`.
+- `action` (String) The action to take on network flows matching this rule. The possible values are: `ALLOW`, `DENY`, `SILENT_DENY`, and `AUDIT`. The `NETWORK_FLOW_RULE_ACTION_`-prefixed spellings are deprecated aliases accepted for backwards compatibility.
+- `direction` (String) The direction of network flows this rule applies to, relative to the host. The possible values are: `ANY`, `OUTGOING`, and `INCOMING`. The `NETWORK_FLOW_DIRECTION_`-prefixed spellings are deprecated aliases accepted for backwards compatibility.
 - `name` (String) The name for this network flow rule. Rule names are unique per-tag.
 - `tag` (String) The tag for this network flow rule. The tag determines which hosts this rule will apply to. The tag must already exist in Workshop.
 
@@ -98,7 +82,7 @@ Optional:
 
 ## Import
 
-Import is supported using the following syntax:
+The [`terraform import` command](https://developer.hashicorp.com/terraform/cli/commands/import) can be used, for example:
 
 ```shell
 terraform import nps_workshop_network_flow_rule.block_spacemolt 12345

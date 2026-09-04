@@ -73,15 +73,29 @@ type RuleAffectedHostThresholdModel struct {
 	Days      types.Int32 `tfsdk:"days"`
 }
 
+// blockReasonPrefix is stripped from Rule.BlockReason values in HCL: users
+// write POLICY, the proto says BLOCK_REASON_POLICY. The prefixed spellings are
+// deprecated aliases during a compatibility window. Shared by the rule and
+// package rule resources, which both carry a block_reason.
+const blockReasonPrefix = "BLOCK_REASON_"
+
+// blockReasonAcceptedValues is the block_reason validator list: both spellings
+// of every meaningful reason. BLOCK_REASON_UNSPECIFIED is the enum's zero
+// value, which ProtoEnumAcceptedValues drops; it is the unset/default case
+// handled by blockReasonDefault.
+func blockReasonAcceptedValues() []string {
+	return utils.ProtoEnumAcceptedValues(apipb.Rule_BlockReason(0).Descriptor(), blockReasonPrefix)
+}
+
 // blockReasonDefault resolves an unset block_reason the same way the server
-// does: blocklist-family policies default to BLOCK_REASON_POLICY, while other
-// policies (which the server forbids a block reason on) resolve to null. This
-// keeps an unset block_reason from showing a perpetual diff without copying the
-// value back from server state.
+// does: blocklist-family policies default to POLICY, while other policies
+// (which the server forbids a block reason on) resolve to null. This keeps an
+// unset block_reason from showing a perpetual diff without copying the value
+// back from server state.
 type blockReasonDefault struct{}
 
 func (m blockReasonDefault) Description(context.Context) string {
-	return "Defaults block_reason to BLOCK_REASON_POLICY for blocklist policies when unset."
+	return "Defaults block_reason to POLICY for blocklist policies when unset."
 }
 
 func (m blockReasonDefault) MarkdownDescription(ctx context.Context) string {
@@ -108,15 +122,28 @@ func (m blockReasonDefault) PlanModifyString(ctx context.Context, req planmodifi
 		return
 	}
 
-	resp.PlanValue = resolveBlockReason(policy.ValueString())
+	resolved := resolveBlockReason(policy.ValueString())
+
+	// Keep the spelling already in state when it names the same reason, so a
+	// state written with the deprecated BLOCK_REASON_-prefixed form doesn't
+	// churn to the short form on the next plan. enumForm can't do this: it only
+	// sees the plan value the framework filled in from config, not the default
+	// resolved here.
+	if !resolved.IsNull() && !req.StateValue.IsNull() &&
+		utils.NormalizeEnum(req.StateValue.ValueString(), blockReasonPrefix) == utils.NormalizeEnum(resolved.ValueString(), blockReasonPrefix) {
+		resp.PlanValue = req.StateValue
+		return
+	}
+
+	resp.PlanValue = resolved
 }
 
 // resolveBlockReason returns the block_reason for an unset config value given
-// the rule's policy: blocklist-family policies default to BLOCK_REASON_POLICY
-// (matching the server), everything else resolves to null.
+// the rule's policy: blocklist-family policies default to POLICY (matching the
+// server's BLOCK_REASON_POLICY), everything else resolves to null.
 func resolveBlockReason(policy string) types.String {
 	if strings.Contains(policy, "BLOCKLIST") {
-		return types.StringValue("BLOCK_REASON_POLICY")
+		return types.StringValue(utils.ShortEnum("BLOCK_REASON_POLICY", blockReasonPrefix))
 	}
 	return types.StringNull()
 }
@@ -130,8 +157,8 @@ func (r *RuleResource) Metadata(ctx context.Context, req resource.MetadataReques
 
 func (r *RuleResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description:         "The nps_workshop_rule resource manages Rules. Management of rules requires the read:rules and write:rules permissions. Changing identifier, rule_type, or tag forces replacement; add a create_before_destroy lifecycle block to avoid a window where the rule does not exist.",
-		MarkdownDescription: "The `nps_workshop_rule` resource manages Rules.\n\nManagement of rules requires the `read:rules` and `write:rules` permissions.\n\nUpdates to non-key fields (such as `policy` or `comment`) are applied atomically in place. Changing the rule's natural key (`identifier`, `rule_type`, or `tag`) forces the rule to be replaced: by default Terraform destroys the old rule before creating the new one, leaving a brief window with no rule in place. To avoid that window, add a `create_before_destroy` lifecycle block:\n\n```hcl\nresource \"nps_workshop_rule\" \"example\" {\n  # ...\n  lifecycle {\n    create_before_destroy = true\n  }\n}\n```",
+		Description:         "The nps_workshop_rule resource manages rules. You need the read:rules and write:rules permissions. Changing policy or comment updates the existing rule. Changing identifier or rule_type replaces it with a rule for a different binary, certificate, or signing identity. That's a different target, so hosts don't need both rules at once. Changing tag alone moves the same rule to a different host group. Terraform destroys the old rule first, so neither tag has it until the new one is created. Set create_before_destroy if you want the new tag to have the rule before the old tag loses it.",
+		MarkdownDescription: "The `nps_workshop_rule` resource manages rules.\n\nYou need the `read:rules` and `write:rules` permissions.\n\nChanging `policy` or `comment` updates the existing rule. Changing `identifier` or `rule_type` replaces it with a rule for a different binary, certificate, or signing identity. That's a different target, so hosts don't need both rules at once. Changing `tag` alone moves the same rule to a different host group. Terraform destroys the old rule first, so neither tag has it until the new one is created. Set `create_before_destroy` if you want the new tag to have the rule before the old tag loses it.",
 
 		Attributes: map[string]schema.Attribute{
 			"identifier": schema.StringAttribute{
@@ -150,7 +177,7 @@ func (r *RuleResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 				MarkdownDescription: "The type of this rule. The possible values are: `BINARY`, `CERTIFICATE`, `TEAMID`, `SIGNINGID`, and `CDHASH`.",
 				Required:            true,
 				Validators: []validator.String{
-					stringvalidator.OneOf(utils.ProtoEnumToList(apipb.RuleType(0).Descriptor())...),
+					stringvalidator.OneOf(utils.ProtoEnumValidValues(apipb.RuleType(0).Descriptor())...),
 				},
 				// Part of the natural key; see identifier.
 				PlanModifiers: []planmodifier.String{
@@ -158,16 +185,16 @@ func (r *RuleResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 				},
 			},
 			"policy": schema.StringAttribute{
-				Description:         "The policy for this rule. The possible values are: ALLOWLIST, ALLOWLIST_COMPILER, BLOCKLIST, SILENT_BLOCKLIST, CEL, and SEATBELT.",
-				MarkdownDescription: "The policy for this rule. The possible values are: `ALLOWLIST`, `ALLOWLIST_COMPILER`, `BLOCKLIST`, `SILENT_BLOCKLIST`, `CEL`, and `SEATBELT`.",
+				Description:         "The policy for this rule. The possible values are: ALLOWLIST, ALLOWLIST_COMPILER, BLOCKLIST, SILENT_BLOCKLIST, SILENT_GUI_BLOCKLIST, SILENT_TTY_BLOCKLIST, CEL, and SEATBELT.",
+				MarkdownDescription: "The policy for this rule. The possible values are: `ALLOWLIST`, `ALLOWLIST_COMPILER`, `BLOCKLIST`, `SILENT_BLOCKLIST`, `SILENT_GUI_BLOCKLIST`, `SILENT_TTY_BLOCKLIST`, `CEL`, and `SEATBELT`.",
 				Required:            true,
 				Validators: []validator.String{
-					stringvalidator.OneOf(utils.ProtoEnumToList(apipb.Policy(0).Descriptor())...),
+					stringvalidator.OneOf(utils.ProtoEnumValidValues(apipb.Policy(0).Descriptor())...),
 				},
 			},
 			"block_reason": schema.StringAttribute{
-				Description:         "The block reason for this rule. Valid values are BLOCK_REASON_POLICY and BLOCK_REASON_MALICIOUS. For blocklist-family policies an unset value defaults to BLOCK_REASON_POLICY; leave it unset for non-blocklist policies, which cannot have a block reason.",
-				MarkdownDescription: "The block reason for this rule. Valid values are `BLOCK_REASON_POLICY` and `BLOCK_REASON_MALICIOUS`. For blocklist-family policies an unset value defaults to `BLOCK_REASON_POLICY`; leave it unset for non-blocklist policies, which cannot have a block reason.",
+				Description:         "The block reason for this rule. The possible values are: POLICY and MALICIOUS. For blocklist-family policies an unset value defaults to POLICY; leave it unset for non-blocklist policies, which cannot have a block reason. The BLOCK_REASON_-prefixed spellings are deprecated aliases accepted for backwards compatibility.",
+				MarkdownDescription: "The block reason for this rule. The possible values are: `POLICY` and `MALICIOUS`. For blocklist-family policies an unset value defaults to `POLICY`; leave it unset for non-blocklist policies, which cannot have a block reason. The `BLOCK_REASON_`-prefixed spellings are deprecated aliases accepted for backwards compatibility.",
 				Optional:            true,
 				// Computed + blockReasonDefault: for blocklist policies the server
 				// treats an unset block_reason as BLOCK_REASON_POLICY. We resolve
@@ -175,11 +202,12 @@ func (r *RuleResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 				// produce a perpetual diff against the server-assigned POLICY.
 				Computed: true,
 				Validators: []validator.String{
-					// Only the meaningful block reasons; BLOCK_REASON_UNSPECIFIED is
-					// reserved for the unset/default case handled by blockReasonDefault.
-					stringvalidator.OneOf("BLOCK_REASON_POLICY", "BLOCK_REASON_MALICIOUS"),
+					stringvalidator.OneOf(blockReasonAcceptedValues()...),
 				},
 				PlanModifiers: []planmodifier.String{
+					// enumForm first: a spelling-only rewrite must not read as a
+					// change before blockReasonDefault considers the config unset.
+					enumForm(blockReasonPrefix),
 					blockReasonDefault{},
 				},
 			},
@@ -259,8 +287,10 @@ func (r *RuleResource) ConfigValidators(ctx context.Context) []resource.ConfigVa
 			var data RuleResourceModel
 			resp.Diagnostics.Append(req.Config.Get(ctx, &data)...)
 
-			if data.BlockReason.ValueString() != "" && data.Policy.ValueString() != "BLOCKLIST" && data.Policy.ValueString() != "SILENT_BLOCKLIST" {
-				resp.Diagnostics.AddError("Block reason is only valid for BLOCKLIST rules", "")
+			// Every blocklist-family policy takes a block reason, matching the
+			// server (and resolveBlockReason).
+			if data.BlockReason.ValueString() != "" && !strings.Contains(data.Policy.ValueString(), "BLOCKLIST") && data.Policy.ValueString() != "" {
+				resp.Diagnostics.AddError("Block reason is only valid for blocklist rules", "")
 			}
 
 			if data.Policy.ValueString() == "CEL" && data.CELExpr.ValueString() == "" {
@@ -412,7 +442,7 @@ func buildCreateRuleRequest(data RuleResourceModel) *apipb.CreateRuleRequest {
 		SeatbeltPolicy: data.SeatbeltPolicy.ValueString(),
 	}
 	if br := data.BlockReason.ValueString(); br != "" {
-		ruleBuilder.BlockReason = apipb.Rule_BlockReason(apipb.Rule_BlockReason_value[br])
+		ruleBuilder.BlockReason = apipb.Rule_BlockReason(apipb.Rule_BlockReason_value[utils.NormalizeEnum(br, blockReasonPrefix)])
 	}
 
 	createReq := apipb.CreateRuleRequest_builder{
@@ -473,7 +503,7 @@ func (r *RuleResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 	data.Tag = types.StringValue(rule.GetTag())
 
 	if rule.GetBlockReason() != apipb.Rule_BLOCK_REASON_UNSPECIFIED {
-		data.BlockReason = types.StringValue(rule.GetBlockReason().String())
+		data.BlockReason = types.StringValue(utils.MatchEnumForm(data.BlockReason.ValueString(), rule.GetBlockReason().String(), blockReasonPrefix))
 	}
 	if rule.GetComment() != "" {
 		data.Comment = types.StringValue(rule.GetComment())
@@ -619,7 +649,7 @@ func (r *RuleResource) List(ctx context.Context, req list.ListRequest, stream *l
 				}
 
 				if rule.GetBlockReason() != apipb.Rule_BLOCK_REASON_UNSPECIFIED {
-					model.BlockReason = types.StringValue(rule.GetBlockReason().String())
+					model.BlockReason = types.StringValue(utils.ShortEnum(rule.GetBlockReason().String(), blockReasonPrefix))
 				}
 				if rule.GetComment() != "" {
 					model.Comment = types.StringValue(rule.GetComment())

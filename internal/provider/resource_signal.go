@@ -44,6 +44,10 @@ func NewSignalListResource() list.ListResource {
 	return &SignalResource{}
 }
 
+// severityPrefix is stripped from Severity values in HCL; the prefixed
+// spellings are deprecated aliases during a compatibility window.
+const severityPrefix = "SEVERITY_"
+
 // SignalResource defines the resource implementation.
 type SignalResource struct {
 	client svcpb.WorkshopServiceClient
@@ -73,8 +77,8 @@ func (r *SignalResource) Metadata(ctx context.Context, req resource.MetadataRequ
 
 func (r *SignalResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description:         "The nps_workshop_signal resource manages signals. A signal is a CEL expression evaluated against events on hosts carrying a given tag; a match produces a signal report. The (name, tag) pair is the primary key. Management of signals requires the read:rules and write:rules permissions. Changing name or tag forces replacement; add a create_before_destroy lifecycle block to avoid a window where the signal does not exist.",
-		MarkdownDescription: "The `nps_workshop_signal` resource manages signals. A signal is a CEL expression evaluated against events on hosts carrying a given tag; a match produces a signal report. The `(name, tag)` pair is the primary key.\n\nManagement of signals requires the `read:rules` and `write:rules` permissions.\n\nUpdates to non-key fields are applied atomically in place. Changing the signal's natural key (`name` or `tag`) forces the signal to be replaced: by default Terraform destroys the old signal before creating the new one, leaving a brief window with no signal in place. To avoid that window, add a `create_before_destroy` lifecycle block:\n\n```hcl\nresource \"nps_workshop_signal\" \"example\" {\n  # ...\n  lifecycle {\n    create_before_destroy = true\n  }\n}\n```",
+		Description:         "The nps_workshop_signal resource manages signals. A signal is a CEL expression evaluated against events on hosts carrying a given tag; a match produces a signal report. You need the read:rules and write:rules permissions. Changing expression, severity, or other non-key fields updates the existing signal. Changing name or tag replaces it. Terraform destroys the old signal first, so hosts have no signal until the new one is created. Set create_before_destroy if you're renaming the signal or moving it to another tag.",
+		MarkdownDescription: "The `nps_workshop_signal` resource manages signals. A signal is a CEL expression evaluated against events on hosts carrying a given tag; a match produces a signal report.\n\nYou need the `read:rules` and `write:rules` permissions.\n\nChanging `expression`, `severity`, or other non-key fields updates the existing signal. Changing `name` or `tag` replaces it. Terraform destroys the old signal first, so hosts have no signal until the new one is created. Set `create_before_destroy` if you're renaming the signal or moving it to another tag.",
 
 		Attributes: map[string]schema.Attribute{
 			"name": schema.StringAttribute{
@@ -103,11 +107,15 @@ func (r *SignalResource) Schema(ctx context.Context, req resource.SchemaRequest,
 				Optional:            true,
 			},
 			"severity": schema.StringAttribute{
-				Description:         "The severity assigned to reports produced by this signal.",
-				MarkdownDescription: "The severity assigned to reports produced by this signal.",
+				Description:         "The severity assigned to reports produced by this signal. The possible values are: INFO, LOW, MEDIUM, HIGH, and CRITICAL. The SEVERITY_-prefixed spellings are deprecated aliases accepted for backwards compatibility.",
+				MarkdownDescription: "The severity assigned to reports produced by this signal. The possible values are: `INFO`, `LOW`, `MEDIUM`, `HIGH`, and `CRITICAL`. The `SEVERITY_`-prefixed spellings are deprecated aliases accepted for backwards compatibility.",
 				Required:            true,
 				Validators: []validator.String{
-					stringvalidator.OneOf(utils.ProtoEnumToList(commonpb.Severity(0).Descriptor())...),
+					stringvalidator.OneOf(utils.ProtoEnumAcceptedValues(commonpb.Severity(0).Descriptor(), severityPrefix)...),
+				},
+				// Suppresses spelling-only diffs between the bare and prefixed forms.
+				PlanModifiers: []planmodifier.String{
+					enumForm(severityPrefix),
 				},
 			},
 			"expression": schema.StringAttribute{
@@ -195,7 +203,7 @@ func (r *SignalResource) upsert(ctx context.Context, data SignalResourceModel) e
 			Name:        data.Name.ValueString(),
 			Tag:         data.Tag.ValueString(),
 			Description: data.Description.ValueString(),
-			Severity:    commonpb.Severity(commonpb.Severity_value[data.Severity.ValueString()]),
+			Severity:    commonpb.Severity(commonpb.Severity_value[utils.NormalizeEnum(data.Severity.ValueString(), severityPrefix)]),
 			Expression:  data.Expression.ValueString(),
 			Disabled:    data.Disabled.ValueBool(),
 			Labels:      labels,
@@ -247,7 +255,7 @@ func (r *SignalResource) Read(ctx context.Context, req resource.ReadRequest, res
 	signal := ret.GetSignals()[0]
 	data.Name = types.StringValue(signal.GetName())
 	data.Tag = types.StringValue(signal.GetTag())
-	data.Severity = types.StringValue(signal.GetSeverity().String())
+	data.Severity = types.StringValue(utils.MatchEnumForm(data.Severity.ValueString(), signal.GetSeverity().String(), severityPrefix))
 	data.Expression = types.StringValue(signal.GetExpression())
 	data.Disabled = types.BoolValue(signal.GetDisabled())
 	data.Labels = stringSetOrNull(ctx, signal.GetLabels(), &resp.Diagnostics)
@@ -381,7 +389,7 @@ func (r *SignalResource) List(ctx context.Context, req list.ListRequest, stream 
 				model := SignalResourceModel{
 					Name:       types.StringValue(signal.GetName()),
 					Tag:        types.StringValue(signal.GetTag()),
-					Severity:   types.StringValue(signal.GetSeverity().String()),
+					Severity:   types.StringValue(utils.ShortEnum(signal.GetSeverity().String(), severityPrefix)),
 					Expression: types.StringValue(signal.GetExpression()),
 					Disabled:   types.BoolValue(signal.GetDisabled()),
 					Labels:     stringSetOrNull(ctx, signal.GetLabels(), &result.Diagnostics),

@@ -3,34 +3,18 @@
 page_title: "nps_workshop_rule Resource - nps"
 subcategory: ""
 description: |-
-  The nps_workshop_rule resource manages Rules.
-  Management of rules requires the read:rules and write:rules permissions.
-  Updates to non-key fields (such as policy or comment) are applied atomically in place. Changing the rule's natural key (identifier, rule_type, or tag) forces the rule to be replaced: by default Terraform destroys the old rule before creating the new one, leaving a brief window with no rule in place. To avoid that window, add a create_before_destroy lifecycle block:
-  
-  resource "nps_workshop_rule" "example" {
-    # ...
-    lifecycle {
-      create_before_destroy = true
-    }
-  }
+  The nps_workshop_rule resource manages rules.
+  You need the read:rules and write:rules permissions.
+  Changing policy or comment updates the existing rule. Changing identifier or rule_type replaces it with a rule for a different binary, certificate, or signing identity. That's a different target, so hosts don't need both rules at once. Changing tag alone moves the same rule to a different host group. Terraform destroys the old rule first, so neither tag has it until the new one is created. Set create_before_destroy if you want the new tag to have the rule before the old tag loses it.
 ---
 
 # nps_workshop_rule (Resource)
 
-The `nps_workshop_rule` resource manages Rules.
+The `nps_workshop_rule` resource manages rules.
 
-Management of rules requires the `read:rules` and `write:rules` permissions.
+You need the `read:rules` and `write:rules` permissions.
 
-Updates to non-key fields (such as `policy` or `comment`) are applied atomically in place. Changing the rule's natural key (`identifier`, `rule_type`, or `tag`) forces the rule to be replaced: by default Terraform destroys the old rule before creating the new one, leaving a brief window with no rule in place. To avoid that window, add a `create_before_destroy` lifecycle block:
-
-```hcl
-resource "nps_workshop_rule" "example" {
-  # ...
-  lifecycle {
-    create_before_destroy = true
-  }
-}
-```
+Changing `policy` or `comment` updates the existing rule. Changing `identifier` or `rule_type` replaces it with a rule for a different binary, certificate, or signing identity. That's a different target, so hosts don't need both rules at once. Changing `tag` alone moves the same rule to a different host group. Terraform destroys the old rule first, so neither tag has it until the new one is created. Set `create_before_destroy` if you want the new tag to have the rule before the old tag loses it.
 
 ## Example Usage
 
@@ -65,14 +49,14 @@ resource "nps_workshop_rule" "yes" {
 ### Required
 
 - `identifier` (String) The identifier for this rule. The format of this identifier depends on the rule type.
-- `policy` (String) The policy for this rule. The possible values are: `ALLOWLIST`, `ALLOWLIST_COMPILER`, `BLOCKLIST`, `SILENT_BLOCKLIST`, `CEL`, and `SEATBELT`.
+- `policy` (String) The policy for this rule. The possible values are: `ALLOWLIST`, `ALLOWLIST_COMPILER`, `BLOCKLIST`, `SILENT_BLOCKLIST`, `SILENT_GUI_BLOCKLIST`, `SILENT_TTY_BLOCKLIST`, `CEL`, and `SEATBELT`.
 - `rule_type` (String) The type of this rule. The possible values are: `BINARY`, `CERTIFICATE`, `TEAMID`, `SIGNINGID`, and `CDHASH`.
 - `tag` (String) The tag for this rule. The tag determines which hosts this rule will apply to. The tag must already exist in Workshop.
 
 ### Optional
 
 - `affected_host_threshold` (Block, Optional) If set, the server will count how many hosts (matching the rule's tag) have run a binary covered by this rule's `identifier` and `rule_type` within the lookback window. If the count is greater than or equal to `host_count`, the rule is not created and a `FailedPrecondition` error is returned. The check applies the same identifier match used for resolution; for `CEL`/`SEATBELT` rules the count reflects the underlying identifier and may overstate the true impact. **Note:** this block is only supported in Workshop 2025.5 and later; in earlier versions it will be ignored by the server. (see [below for nested schema](#nestedblock--affected_host_threshold))
-- `block_reason` (String) The block reason for this rule. Valid values are `BLOCK_REASON_POLICY` and `BLOCK_REASON_MALICIOUS`. For blocklist-family policies an unset value defaults to `BLOCK_REASON_POLICY`; leave it unset for non-blocklist policies, which cannot have a block reason.
+- `block_reason` (String) The block reason for this rule. The possible values are: `POLICY` and `MALICIOUS`. For blocklist-family policies an unset value defaults to `POLICY`; leave it unset for non-blocklist policies, which cannot have a block reason. The `BLOCK_REASON_`-prefixed spellings are deprecated aliases accepted for backwards compatibility.
 - `cel_expr` (String) A CEL expression to evaluate when this rule matches. Only valid when the policy is set to `CEL`.
 - `comment` (String) A comment to add to this rule. Will be displayed in the Workshop UI.
 - `custom_msg` (String) A custom message to display to the user when this rule causes Santa to block the execution.
@@ -93,7 +77,7 @@ Optional:
 
 ## Import
 
-Import is supported using the following syntax:
+The [`terraform import` command](https://developer.hashicorp.com/terraform/cli/commands/import) can be used, for example:
 
 ```shell
 terraform import nps_workshop_rule.test 90216EA0-B60E-42EF-996A-37212B8F378D

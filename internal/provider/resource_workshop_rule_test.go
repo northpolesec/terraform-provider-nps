@@ -22,6 +22,7 @@ func TestAccWorkshopRule(t *testing.T) {
 					resource.TestCheckResourceAttr("nps_workshop_rule.yes", "identifier", "platform:com.apple.yes"),
 					resource.TestCheckResourceAttr("nps_workshop_rule.yes", "rule_type", "SIGNINGID"),
 					resource.TestCheckResourceAttr("nps_workshop_rule.yes", "policy", "BLOCKLIST"),
+					resource.TestCheckResourceAttr("nps_workshop_rule.yes", "block_reason", "POLICY"),
 					resource.TestCheckResourceAttr("nps_workshop_rule.yes", "comment", "block yes"),
 				),
 			},
@@ -50,12 +51,22 @@ func TestAccWorkshopRule(t *testing.T) {
 				ImportStateVerify:       true,
 				ImportStateVerifyIgnore: []string{"comment"},
 			},
+			// The deprecated long block_reason spelling applies over short-form
+			// state with no diff.
+			{
+				Config:   testAccRuleResourceConfigWithBlockReason("yes", "platform:com.apple.yes", "SIGNINGID", "BLOCKLIST", "", "BLOCK_REASON_POLICY"),
+				PlanOnly: true,
+			},
 			// Delete testing automatically occurs in TestCase
 		},
 	})
 }
 
 func testAccExampleRuleResourceConfigGlobal(name, identifier, ruleType, policy, comment string) string {
+	return testAccRuleResourceConfigWithBlockReason(name, identifier, ruleType, policy, comment, "POLICY")
+}
+
+func testAccRuleResourceConfigWithBlockReason(name, identifier, ruleType, policy, comment, blockReason string) string {
 	return fmt.Sprintf(`
 provider "nps" {
   endpoint = "localhost:8080"
@@ -69,7 +80,7 @@ resource "nps_workshop_rule" %[1]q {
 	comment    = %[6]q
 	block_reason = %[7]q
 }
-`, name, identifier, ruleType, policy, "global", comment, "BLOCK_REASON_POLICY")
+`, name, identifier, ruleType, policy, "global", comment, blockReason)
 }
 
 func testAccRuleResourceConfigWithTag(name, identifier, ruleType, policy, tag, comment string) string {
@@ -90,5 +101,5 @@ resource "nps_workshop_rule" %[1]q {
   comment    = %[6]q
   block_reason = %[7]q
 }
-`, name, identifier, ruleType, policy, tag, comment, "BLOCK_REASON_POLICY")
+`, name, identifier, ruleType, policy, tag, comment, "POLICY")
 }
