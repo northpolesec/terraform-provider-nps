@@ -14,8 +14,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/identityschema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"google.golang.org/protobuf/proto"
@@ -85,6 +83,9 @@ type resolvedGroupRef struct {
 
 func (r *TagResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_workshop_tag"
+	// The tag name is the identity and RenameTag changes it in place, so the
+	// identity is mutable across the resource's life.
+	resp.ResourceBehavior.MutableIdentity = true
 }
 
 func (r *TagResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
@@ -94,12 +95,9 @@ func (r *TagResource) Schema(ctx context.Context, req resource.SchemaRequest, re
 
 		Attributes: map[string]schema.Attribute{
 			"name": schema.StringAttribute{
-				Description:         "The name for this tag. Changing the name forces replacement.",
-				MarkdownDescription: "The name for this tag. Changing the name forces replacement.",
+				Description:         "The name for this tag. Changing the name renames the tag in place: its group assignments, rules, sync settings and position in the tag ordering are all preserved.",
+				MarkdownDescription: "The name for this tag. Changing the name renames the tag in place: its group assignments, rules, sync settings and position in the tag ordering are all preserved.",
 				Required:            true,
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
-				},
 			},
 			"group_names": schema.SetAttribute{
 				Description:         "Names of directory groups this tag should be assigned to. Workshop manages group tags by internal ID; the provider resolves each name via ListGroups and merges this tag into the group's existing tags. A name that matches zero or more than one group is an error.",
@@ -393,6 +391,34 @@ func (r *TagResource) Update(ctx context.Context, req resource.UpdateRequest, re
 		return
 	}
 
+	// Rename first, so the group reconciliation below operates on the new name.
+	// RenameTag preserves every assignment, rule and setting attached to the
+	// tag; replacing the resource instead would discard all of them.
+	if !plan.Name.Equal(state.Name) {
+		if _, err := r.client.RenameTag(ctx, apipb.RenameTagRequest_builder{
+			Tag:    proto.String(state.Name.ValueString()),
+			NewTag: proto.String(plan.Name.ValueString()),
+		}.Build()); err != nil {
+			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Failed to rename tag %q to %q: %v", state.Name.ValueString(), plan.Name.ValueString(), err))
+			return
+		}
+		tflog.Info(ctx, fmt.Sprintf("Renamed tag %q to %q", state.Name.ValueString(), plan.Name.ValueString()))
+
+		// Commit the new name straight away, keeping the group assignments from
+		// prior state. The rename has already happened and there is no undo, so
+		// if the group reconciliation below fails we must still leave state
+		// pointing at the name the tag now has: otherwise the next refresh looks
+		// up the old name, finds nothing, drops the resource from state, and
+		// leaves the renamed tag orphaned. Read reconciles the group lists
+		// against the server, so a stale list here is recovered on the next plan.
+		state.Name = plan.Name
+		resp.Diagnostics.Append(resp.Identity.Set(ctx, TagIdentityModel{Name: plan.Name})...)
+		resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+	}
+
 	// Key the diff by the resolved group ID so two refs that alias the same
 	// group (e.g. one by name, one by idp_id) collapse to a single target and
 	// don't produce spurious remove-then-add operations or, worse, strip the
@@ -448,6 +474,7 @@ func (r *TagResource) Update(ctx context.Context, req resource.UpdateRequest, re
 		return
 	}
 
+	resp.Diagnostics.Append(resp.Identity.Set(ctx, TagIdentityModel{Name: plan.Name})...)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 

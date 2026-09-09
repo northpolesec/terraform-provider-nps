@@ -950,16 +950,28 @@ func syncSettingsProtoToModel(ctx context.Context, ss *apipb.SyncSettings) (Sync
 	}
 
 	if odmm := ss.GetOnDemandMonitorMode(); odmm != nil {
+		// An UNSPECIFIED state is not valid configuration; writing it would
+		// leave state the schema's own OneOf validator rejects on the next
+		// plan. Mirror the ClientMode handling above and report null.
+		state := types.StringNull()
+		if odmm.GetState() != apipb.OnDemandMonitorMode_ON_DEMAND_MONITOR_MODE_STATE_UNSPECIFIED {
+			state = types.StringValue(odmm.GetState().String())
+		}
 		m.OnDemandMonitorMode = &SyncSettingsOnDemandMonitorModeModel{
-			State:                  types.StringValue(odmm.GetState().String()),
+			State:                  state,
 			MaxMinutes:             zeroUint32ToNullInt64(odmm.GetMaxMinutes()),
 			DefaultDurationMinutes: zeroUint32ToNullInt64(odmm.GetDefaultDurationMinutes()),
 		}
 	}
 
 	if odam := ss.GetOnDemandAdminMode(); odam != nil {
+		// See the on-demand monitor mode note above.
+		state := types.StringNull()
+		if odam.GetState() != apipb.OnDemandAdminMode_ON_DEMAND_ADMIN_MODE_STATE_UNSPECIFIED {
+			state = types.StringValue(odam.GetState().String())
+		}
 		m.OnDemandAdminMode = &SyncSettingsOnDemandAdminModeModel{
-			State:                  types.StringValue(odam.GetState().String()),
+			State:                  state,
 			MaxMinutes:             zeroUint32ToNullInt64(odam.GetMaxMinutes()),
 			DefaultDurationMinutes: zeroUint32ToNullInt64(odam.GetDefaultDurationMinutes()),
 			// require_justification has no proto presence; reflect it directly so an

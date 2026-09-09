@@ -4,6 +4,7 @@ package provider
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
@@ -21,6 +22,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
+	"github.com/northpolesec/terraform-provider-nps/internal/utils"
 	"google.golang.org/protobuf/proto"
 
 	svcpb "buf.build/gen/go/northpolesec/workshop-api/grpc/go/workshop/v1/workshopv1grpc"
@@ -35,6 +37,14 @@ var _ resource.ResourceWithIdentity = &FileAccessRuleResource{}
 var _ list.ListResource = &FileAccessRuleResource{}
 var _ list.ListResourceWithConfigure = &FileAccessRuleResource{}
 
+// fileAccessRuleTypePrefix is stripped from FileAccessRuleType values in HCL:
+// the proto says FILE_ACCESS_RULE_TYPE_PATHS_WITH_ALLOWED_PROCESSES.
+const fileAccessRuleTypePrefix = "FILE_ACCESS_RULE_TYPE_"
+
+// fileAccessRuleTypeToFriendly maps each rule type to the CamelCase spelling
+// this resource has always documented and writes back on read. The proto
+// spellings (bare and prefixed) are accepted aliases; see
+// fileAccessRuleTypeFromString.
 var fileAccessRuleTypeToFriendly = map[apipb.FileAccessRuleType]string{
 	apipb.FileAccessRuleType_FILE_ACCESS_RULE_TYPE_PATHS_WITH_ALLOWED_PROCESSES: "PathsWithAllowedProcesses",
 	apipb.FileAccessRuleType_FILE_ACCESS_RULE_TYPE_PATHS_WITH_DENIED_PROCESSES:  "PathsWithDeniedProcesses",
@@ -47,6 +57,75 @@ func fileAccessRuleTypeFriendlyName(rt apipb.FileAccessRuleType) string {
 		return name
 	}
 	return rt.String()
+}
+
+// fileAccessRuleTypeAcceptedValues is the rule_type validator list: the
+// CamelCase spellings this resource documents, plus both proto spellings of
+// every value. Config generated from the raw API enum must plan cleanly.
+func fileAccessRuleTypeAcceptedValues() []string {
+	accepted := make([]string, 0, len(fileAccessRuleTypeToFriendly)*3)
+	for _, friendly := range fileAccessRuleTypeToFriendly {
+		accepted = append(accepted, friendly)
+	}
+	slices.Sort(accepted)
+	return append(accepted, utils.ProtoEnumAcceptedValues(apipb.FileAccessRuleType(0).Descriptor(), fileAccessRuleTypePrefix)...)
+}
+
+// fileAccessRuleTypeFromString resolves any accepted spelling of a rule type.
+// The second return is false for a value that names no rule type, which the
+// validator rejects but an unvalidated path (an unmapped enum written back
+// into state by an older provider) can still reach.
+func fileAccessRuleTypeFromString(s string) (apipb.FileAccessRuleType, bool) {
+	for rt, friendly := range fileAccessRuleTypeToFriendly {
+		if s == friendly {
+			return rt, true
+		}
+	}
+	v, ok := apipb.FileAccessRuleType_value[utils.NormalizeEnum(s, fileAccessRuleTypePrefix)]
+	if !ok || apipb.FileAccessRuleType(v) == apipb.FileAccessRuleType_FILE_ACCESS_RULE_TYPE_UNSPECIFIED {
+		return apipb.FileAccessRuleType_FILE_ACCESS_RULE_TYPE_UNSPECIFIED, false
+	}
+	return apipb.FileAccessRuleType(v), true
+}
+
+// fileAccessRuleTypeToModel maps a server rule type onto the model, keeping the
+// spelling already in state when both name the same value so a refresh never
+// rewrites state over spelling alone. An unrecognized value (the server
+// returning UNSPECIFIED) leaves the prior value in place rather than writing a
+// string the schema's own validator rejects.
+func fileAccessRuleTypeToModel(prior types.String, rt apipb.FileAccessRuleType) types.String {
+	if _, ok := fileAccessRuleTypeToFriendly[rt]; !ok {
+		return prior
+	}
+	if got, ok := fileAccessRuleTypeFromString(prior.ValueString()); ok && got == rt {
+		return prior
+	}
+	return types.StringValue(fileAccessRuleTypeFriendlyName(rt))
+}
+
+// fileAccessRuleTypeForm suppresses spelling-only diffs on rule_type: the
+// CamelCase, bare proto, and prefixed proto spellings of a value are equal.
+// enumForm cannot do this job because the CamelCase spelling is not a prefixed
+// form of the proto name.
+type fileAccessRuleTypeForm struct{}
+
+func (m fileAccessRuleTypeForm) Description(context.Context) string {
+	return "Treats the CamelCase and proto spellings of a rule type as equal."
+}
+
+func (m fileAccessRuleTypeForm) MarkdownDescription(ctx context.Context) string {
+	return m.Description(ctx)
+}
+
+func (m fileAccessRuleTypeForm) PlanModifyString(_ context.Context, req planmodifier.StringRequest, resp *planmodifier.StringResponse) {
+	if req.StateValue.IsNull() || req.PlanValue.IsNull() || req.PlanValue.IsUnknown() {
+		return
+	}
+	planned, okPlan := fileAccessRuleTypeFromString(req.PlanValue.ValueString())
+	stated, okState := fileAccessRuleTypeFromString(req.StateValue.ValueString())
+	if okPlan && okState && planned == stated {
+		resp.PlanValue = req.StateValue
+	}
 }
 
 func NewFileAccessRuleResource() resource.Resource {
@@ -136,16 +215,15 @@ func (r *FileAccessRuleResource) Schema(ctx context.Context, req resource.Schema
 				Default:             booldefault.StaticBool(false),
 			},
 			"rule_type": schema.StringAttribute{
-				Description:         "The type of this file access rule. The possible values are: PathsWithAllowedProcesses, PathsWithDeniedProcesses, ProcessesWithAllowedPaths, ProcessesWithDeniedPaths.",
-				MarkdownDescription: "The type of this file access rule. The possible values are: `PathsWithAllowedProcesses`, `PathsWithDeniedProcesses`, `ProcessesWithAllowedPaths`, `ProcessesWithDeniedPaths`.",
+				Description:         "The type of this file access rule. The possible values are: PathsWithAllowedProcesses, PathsWithDeniedProcesses, ProcessesWithAllowedPaths, ProcessesWithDeniedPaths. The proto spellings (PATHS_WITH_ALLOWED_PROCESSES and the FILE_ACCESS_RULE_TYPE_-prefixed form) are accepted aliases.",
+				MarkdownDescription: "The type of this file access rule. The possible values are: `PathsWithAllowedProcesses`, `PathsWithDeniedProcesses`, `ProcessesWithAllowedPaths`, `ProcessesWithDeniedPaths`. The proto spellings (`PATHS_WITH_ALLOWED_PROCESSES` and the `FILE_ACCESS_RULE_TYPE_`-prefixed form) are accepted aliases.",
 				Required:            true,
 				Validators: []validator.String{
-					stringvalidator.OneOf(
-						"PathsWithAllowedProcesses",
-						"PathsWithDeniedProcesses",
-						"ProcessesWithAllowedPaths",
-						"ProcessesWithDeniedPaths",
-					),
+					stringvalidator.OneOf(fileAccessRuleTypeAcceptedValues()...),
+				},
+				// Suppresses spelling-only diffs between the CamelCase and proto forms.
+				PlanModifiers: []planmodifier.String{
+					fileAccessRuleTypeForm{},
 				},
 			},
 			"enable_silent_mode": schema.BoolAttribute{
@@ -245,7 +323,6 @@ func (r *FileAccessRuleResource) Schema(ctx context.Context, req resource.Schema
 					// TODO(rah): Add validator.
 				},
 			},
-
 			// Computed value, returned from Create. The ID changes on every
 			// upsert (including in-place updates), so it is intentionally left
 			// without UseStateForUnknown: it plans as "known after apply"
@@ -346,7 +423,7 @@ func (r *FileAccessRuleResource) Read(ctx context.Context, req resource.ReadRequ
 	data.Name = types.StringValue(rule.GetName())
 	data.AllowReadAccess = types.BoolValue(rule.GetAllowReadAccess())
 	data.BlockViolations = types.BoolValue(rule.GetBlockViolations())
-	data.RuleType = types.StringValue(fileAccessRuleTypeFriendlyName(rule.GetRuleType()))
+	data.RuleType = fileAccessRuleTypeToModel(data.RuleType, rule.GetRuleType())
 	data.EnableSilentMode = types.BoolValue(rule.GetEnableSilentMode())
 	data.EnableSilentTtyMode = types.BoolValue(rule.GetEnableSilentTtyMode())
 
@@ -392,16 +469,14 @@ func (r *FileAccessRuleResource) Read(ctx context.Context, req resource.ReadRequ
 
 // buildFileAccessRule builds the (upsert) FileAccessRule from the model.
 func buildFileAccessRule(ctx context.Context, data FileAccessRuleResourceModel, diags *diag.Diagnostics) *apipb.FileAccessRule {
-	ruleType := apipb.FileAccessRuleType_FILE_ACCESS_RULE_TYPE_UNSPECIFIED
-	switch data.RuleType.ValueString() {
-	case "PathsWithAllowedProcesses":
-		ruleType = apipb.FileAccessRuleType_FILE_ACCESS_RULE_TYPE_PATHS_WITH_ALLOWED_PROCESSES
-	case "PathsWithDeniedProcesses":
-		ruleType = apipb.FileAccessRuleType_FILE_ACCESS_RULE_TYPE_PATHS_WITH_DENIED_PROCESSES
-	case "ProcessesWithAllowedPaths":
-		ruleType = apipb.FileAccessRuleType_FILE_ACCESS_RULE_TYPE_PROCESSES_WITH_ALLOWED_PATHS
-	case "ProcessesWithDeniedPaths":
-		ruleType = apipb.FileAccessRuleType_FILE_ACCESS_RULE_TYPE_PROCESSES_WITH_DENIED_PATHS
+	ruleType, ok := fileAccessRuleTypeFromString(data.RuleType.ValueString())
+	if !ok {
+		diags.AddAttributeError(
+			path.Root("rule_type"),
+			"Unknown rule type",
+			fmt.Sprintf("%q names no file access rule type.", data.RuleType.ValueString()),
+		)
+		return nil
 	}
 
 	builder := apipb.FileAccessRule_builder{
