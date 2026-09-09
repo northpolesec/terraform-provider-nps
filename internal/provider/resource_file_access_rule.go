@@ -9,6 +9,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/list"
 	listschema "github.com/hashicorp/terraform-plugin-framework/list/schema"
@@ -128,6 +129,133 @@ func (m fileAccessRuleTypeForm) PlanModifyString(_ context.Context, req planmodi
 	}
 }
 
+// Prefixes stripped from the process override enums in HCL. Both spellings of
+// each value are accepted.
+const (
+	fileAccessProcessTypePrefix   = "FILE_ACCESS_PROCESS_TYPE_"
+	fileAccessProcessActionPrefix = "FILE_ACCESS_PROCESS_ACTION_"
+)
+
+// fileAccessProcessOverrideModel describes one process_overrides entry.
+type fileAccessProcessOverrideModel struct {
+	Type                types.String `tfsdk:"type"`
+	Value               types.String `tfsdk:"value"`
+	Action              types.String `tfsdk:"action"`
+	AllowReadAccess     types.Bool   `tfsdk:"allow_read_access"`
+	EnableSilentMode    types.Bool   `tfsdk:"enable_silent_mode"`
+	EnableSilentTtyMode types.Bool   `tfsdk:"enable_silent_tty_mode"`
+	BlockMessage        types.String `tfsdk:"block_message"`
+	EventDetailUrl      types.String `tfsdk:"event_detail_url"`
+	EventDetailText     types.String `tfsdk:"event_detail_text"`
+}
+
+var fileAccessProcessOverrideAttrTypes = map[string]attr.Type{
+	"type":                   types.StringType,
+	"value":                  types.StringType,
+	"action":                 types.StringType,
+	"allow_read_access":      types.BoolType,
+	"enable_silent_mode":     types.BoolType,
+	"enable_silent_tty_mode": types.BoolType,
+	"block_message":          types.StringType,
+	"event_detail_url":       types.StringType,
+	"event_detail_text":      types.StringType,
+}
+
+var fileAccessProcessOverrideObjectType = types.ObjectType{AttrTypes: fileAccessProcessOverrideAttrTypes}
+
+// fileAccessProcessOverridesToProto converts the process_overrides list to the
+// proto form. Each unset optional field is left absent so the server inherits
+// the rule's own value for it, which is what an omitted attribute means.
+func fileAccessProcessOverridesToProto(ctx context.Context, l types.List, diags *diag.Diagnostics) []*apipb.FileAccessRule_ProcessOverride {
+	if l.IsNull() || l.IsUnknown() {
+		return nil
+	}
+
+	var ms []fileAccessProcessOverrideModel
+	// Use a local diagnostics set so a caller that already accumulated an error
+	// does not make this look like a conversion failure.
+	var local diag.Diagnostics
+	local.Append(l.ElementsAs(ctx, &ms, false)...)
+	diags.Append(local...)
+	if local.HasError() {
+		return nil
+	}
+
+	out := make([]*apipb.FileAccessRule_ProcessOverride, 0, len(ms))
+	for _, m := range ms {
+		b := apipb.FileAccessRule_ProcessOverride_builder{
+			Type:  apipb.FileAccessProcessType(apipb.FileAccessProcessType_value[utils.NormalizeEnum(m.Type.ValueString(), fileAccessProcessTypePrefix)]),
+			Value: m.Value.ValueString(),
+			// A null action is UNSPECIFIED: inherit the outcome the rule's
+			// rule_type implies for this process.
+			Action: apipb.FileAccessProcessAction(apipb.FileAccessProcessAction_value[utils.NormalizeEnum(m.Action.ValueString(), fileAccessProcessActionPrefix)]),
+		}
+		if !m.AllowReadAccess.IsNull() {
+			b.AllowReadAccess = proto.Bool(m.AllowReadAccess.ValueBool())
+		}
+		if !m.EnableSilentMode.IsNull() {
+			b.EnableSilentMode = proto.Bool(m.EnableSilentMode.ValueBool())
+		}
+		if !m.EnableSilentTtyMode.IsNull() {
+			b.EnableSilentTtyMode = proto.Bool(m.EnableSilentTtyMode.ValueBool())
+		}
+		if !m.BlockMessage.IsNull() {
+			b.BlockMessage = proto.String(m.BlockMessage.ValueString())
+		}
+		if !m.EventDetailUrl.IsNull() {
+			b.EventDetailUrl = proto.String(m.EventDetailUrl.ValueString())
+		}
+		if !m.EventDetailText.IsNull() {
+			b.EventDetailText = proto.String(m.EventDetailText.ValueString())
+		}
+		out = append(out, b.Build())
+	}
+	return out
+}
+
+// fileAccessProcessOverridesToModel converts the proto process overrides to the
+// list attribute value, writing the canonical short enum spellings. A field the
+// server reports as absent stays null, so it keeps reading as "inherit".
+func fileAccessProcessOverridesToModel(ctx context.Context, overrides []*apipb.FileAccessRule_ProcessOverride, diags *diag.Diagnostics) types.List {
+	if len(overrides) == 0 {
+		return types.ListNull(fileAccessProcessOverrideObjectType)
+	}
+
+	ms := make([]fileAccessProcessOverrideModel, 0, len(overrides))
+	for _, o := range overrides {
+		m := fileAccessProcessOverrideModel{
+			Type:  types.StringValue(utils.ShortEnum(o.GetType().String(), fileAccessProcessTypePrefix)),
+			Value: types.StringValue(o.GetValue()),
+		}
+		if o.GetAction() != apipb.FileAccessProcessAction_FILE_ACCESS_PROCESS_ACTION_UNSPECIFIED {
+			m.Action = types.StringValue(utils.ShortEnum(o.GetAction().String(), fileAccessProcessActionPrefix))
+		}
+		if o.HasAllowReadAccess() {
+			m.AllowReadAccess = types.BoolValue(o.GetAllowReadAccess())
+		}
+		if o.HasEnableSilentMode() {
+			m.EnableSilentMode = types.BoolValue(o.GetEnableSilentMode())
+		}
+		if o.HasEnableSilentTtyMode() {
+			m.EnableSilentTtyMode = types.BoolValue(o.GetEnableSilentTtyMode())
+		}
+		if o.HasBlockMessage() {
+			m.BlockMessage = types.StringValue(o.GetBlockMessage())
+		}
+		if o.HasEventDetailUrl() {
+			m.EventDetailUrl = types.StringValue(o.GetEventDetailUrl())
+		}
+		if o.HasEventDetailText() {
+			m.EventDetailText = types.StringValue(o.GetEventDetailText())
+		}
+		ms = append(ms, m)
+	}
+
+	l, d := types.ListValueFrom(ctx, fileAccessProcessOverrideObjectType, ms)
+	diags.Append(d...)
+	return l
+}
+
 func NewFileAccessRuleResource() resource.Resource {
 	return &FileAccessRuleResource{}
 }
@@ -161,6 +289,7 @@ type FileAccessRuleResourceModel struct {
 	ProcessSigningIds         types.List   `tfsdk:"process_signing_ids"`
 	ProcessCertificateSha256s types.List   `tfsdk:"process_certificate_sha256s"`
 	ProcessTeamIds            types.List   `tfsdk:"process_team_ids"`
+	ProcessOverrides          types.List   `tfsdk:"process_overrides"`
 
 	Id types.Int64 `tfsdk:"id"`
 }
@@ -323,6 +452,82 @@ func (r *FileAccessRuleResource) Schema(ctx context.Context, req resource.Schema
 					// TODO(rah): Add validator.
 				},
 			},
+			"process_overrides": schema.ListNestedAttribute{
+				Description:         "Per-process overrides of this rule's own settings, so that e.g. one process can be denied silently under a rule that otherwise allows the processes it lists. Each entry's type and value must match a process listed in the process_* attributes above; overrides referencing an unlisted process are rejected. Unset attributes within an entry inherit the rule's value. Omit the attribute rather than setting it to an empty list: the two mean the same thing to the server, which is a plain repeated field. Requires Santa 2026.8 or newer; older agents fall back to the outcome the rule implies for a process it does not list, which is never more permissive than the override.",
+				MarkdownDescription: "Per-process overrides of this rule's own settings, so that e.g. one process can be denied silently under a rule that otherwise allows the processes it lists.\n\nEach entry's `type` and `value` must match a process listed in the `process_*` attributes above; overrides referencing an unlisted process are rejected. Unset attributes within an entry inherit the rule's value.\n\nOmit the attribute rather than setting it to an empty list: the two mean the same thing to the server, which is a plain repeated field.\n\nRequires Santa 2026.8 or newer; older agents fall back to the outcome the rule implies for a process it does not list, which is never more permissive than the override.",
+				Optional:            true,
+				Validators: []validator.List{
+					// An empty list and an unset attribute mean the same thing on a
+					// plain repeated field, and the server cannot report the
+					// difference back, so only one of the two spellings can survive
+					// a refresh. Reject the redundant one rather than let it diff on
+					// every plan. (Contrast the sync settings attribute of the same
+					// name, where a wrapper message makes an empty list meaningful.)
+					listvalidator.SizeAtLeast(1),
+				},
+				NestedObject: schema.NestedAttributeObject{
+					Attributes: map[string]schema.Attribute{
+						"type": schema.StringAttribute{
+							Description:         "Which kind of process matcher this entry applies to. The possible values are: BINARY_PATH, CD_HASH, SIGNING_ID, CERTIFICATE_SHA256, and TEAM_ID. The FILE_ACCESS_PROCESS_TYPE_-prefixed spellings are accepted aliases.",
+							MarkdownDescription: "Which kind of process matcher this entry applies to. The possible values are: `BINARY_PATH`, `CD_HASH`, `SIGNING_ID`, `CERTIFICATE_SHA256`, and `TEAM_ID`. The `FILE_ACCESS_PROCESS_TYPE_`-prefixed spellings are accepted aliases.",
+							Required:            true,
+							Validators: []validator.String{
+								stringvalidator.OneOf(utils.ProtoEnumAcceptedValues(apipb.FileAccessProcessType(0).Descriptor(), fileAccessProcessTypePrefix)...),
+							},
+							PlanModifiers: []planmodifier.String{
+								enumForm(fileAccessProcessTypePrefix),
+							},
+						},
+						"value": schema.StringAttribute{
+							Description:         "The process matcher value, which must appear in the corresponding process_* attribute of the rule.",
+							MarkdownDescription: "The process matcher value, which must appear in the corresponding `process_*` attribute of the rule.",
+							Required:            true,
+						},
+						"action": schema.StringAttribute{
+							Description:         "The action this rule takes for the process. The possible values are: ALLOW, AUDIT, and DENY. Leave unset to inherit the outcome the rule's rule_type implies. The FILE_ACCESS_PROCESS_ACTION_-prefixed spellings are accepted aliases.",
+							MarkdownDescription: "The action this rule takes for the process. The possible values are: `ALLOW`, `AUDIT`, and `DENY`. Leave unset to inherit the outcome the rule's `rule_type` implies. The `FILE_ACCESS_PROCESS_ACTION_`-prefixed spellings are accepted aliases.",
+							Optional:            true,
+							Validators: []validator.String{
+								stringvalidator.OneOf(utils.ProtoEnumAcceptedValues(apipb.FileAccessProcessAction(0).Descriptor(), fileAccessProcessActionPrefix)...),
+							},
+							PlanModifiers: []planmodifier.String{
+								enumForm(fileAccessProcessActionPrefix),
+							},
+						},
+						"allow_read_access": schema.BoolAttribute{
+							Description:         "Overrides the rule's allow_read_access for this process. Unset inherits it.",
+							MarkdownDescription: "Overrides the rule's `allow_read_access` for this process. Unset inherits it.",
+							Optional:            true,
+						},
+						"enable_silent_mode": schema.BoolAttribute{
+							Description:         "Overrides the rule's enable_silent_mode for this process. Unset inherits it.",
+							MarkdownDescription: "Overrides the rule's `enable_silent_mode` for this process. Unset inherits it.",
+							Optional:            true,
+						},
+						"enable_silent_tty_mode": schema.BoolAttribute{
+							Description:         "Overrides the rule's enable_silent_tty_mode for this process. Unset inherits it.",
+							MarkdownDescription: "Overrides the rule's `enable_silent_tty_mode` for this process. Unset inherits it.",
+							Optional:            true,
+						},
+						"block_message": schema.StringAttribute{
+							Description:         "Overrides the rule's block_message for this process. Unset inherits it.",
+							MarkdownDescription: "Overrides the rule's `block_message` for this process. Unset inherits it.",
+							Optional:            true,
+						},
+						"event_detail_url": schema.StringAttribute{
+							Description:         "Overrides the rule's event_detail_url for this process. Unset inherits it.",
+							MarkdownDescription: "Overrides the rule's `event_detail_url` for this process. Unset inherits it.",
+							Optional:            true,
+						},
+						"event_detail_text": schema.StringAttribute{
+							Description:         "Overrides the rule's event_detail_text for this process. Unset inherits it.",
+							MarkdownDescription: "Overrides the rule's `event_detail_text` for this process. Unset inherits it.",
+							Optional:            true,
+						},
+					},
+				},
+			},
+
 			// Computed value, returned from Create. The ID changes on every
 			// upsert (including in-place updates), so it is intentionally left
 			// without UseStateForUnknown: it plans as "known after apply"
@@ -459,6 +664,7 @@ func (r *FileAccessRuleResource) Read(ctx context.Context, req resource.ReadRequ
 	if len(rule.GetProcessTeamIds()) > 0 {
 		data.ProcessTeamIds, _ = types.ListValueFrom(ctx, types.StringType, rule.GetProcessTeamIds())
 	}
+	data.ProcessOverrides = fileAccessProcessOverridesToModel(ctx, rule.GetProcessOverrides(), &resp.Diagnostics)
 
 	// Set the identity
 	resp.Diagnostics.Append(resp.Identity.Set(ctx, FileAccessRuleIdentityModel{Id: data.Id})...)
@@ -490,6 +696,7 @@ func buildFileAccessRule(ctx context.Context, data FileAccessRuleResourceModel, 
 		BlockMessage:        data.BlockMessage.ValueString(),
 		EventDetailUrl:      data.EventDetailUrl.ValueString(),
 		EventDetailText:     data.EventDetailText.ValueString(),
+		ProcessOverrides:    fileAccessProcessOverridesToProto(ctx, data.ProcessOverrides, diags),
 	}
 
 	convertListHelper := func(v types.List, target *[]string) {
@@ -652,6 +859,7 @@ func (r *FileAccessRuleResource) List(ctx context.Context, req list.ListRequest,
 					AllowReadAccess:           types.BoolValue(rule.GetAllowReadAccess()),
 					BlockViolations:           types.BoolValue(rule.GetBlockViolations()),
 					RuleType:                  types.StringValue(fileAccessRuleTypeFriendlyName(rule.GetRuleType())),
+					ProcessOverrides:          fileAccessProcessOverridesToModel(ctx, rule.GetProcessOverrides(), &result.Diagnostics),
 					EnableSilentMode:          types.BoolValue(rule.GetEnableSilentMode()),
 					EnableSilentTtyMode:       types.BoolValue(rule.GetEnableSilentTtyMode()),
 					PathLiterals:              toListOrNull(rule.GetPathLiterals()),

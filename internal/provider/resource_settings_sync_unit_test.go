@@ -5,9 +5,13 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"google.golang.org/protobuf/proto"
 
@@ -331,6 +335,123 @@ func TestSyncSettingsClientModeUnknownIsNull(t *testing.T) {
 	}
 }
 
+// TestSyncSettingsPreviouslyDroppedFieldsRoundtrip is the regression test for
+// the fields the model did not carry. This resource does a delete-then-update
+// on every apply, so an unmodelled field was not merely unmanaged: it was
+// destroyed the first time Terraform touched the tag.
+func TestSyncSettingsPreviouslyDroppedFieldsRoundtrip(t *testing.T) {
+	ctx := context.Background()
+
+	original := apipb.SyncSettings_builder{
+		Tag:                       "dev",
+		BatchSize:                 proto.Uint32(250),
+		EnableAllEventUpload:      proto.Bool(true),
+		AutoBundleInventory:       proto.Bool(false),
+		StorePlatformBinaryEvents: proto.Bool(true),
+		NetworkExtension: apipb.SyncSettings_NetworkExtension_builder{
+			Enable:            proto.Bool(true),
+			FlowDefaultAction: apipb.NetworkFlowDefaultAction_NETWORK_FLOW_DEFAULT_ACTION_DENY.Enum(),
+		}.Build(),
+		CelFallbackRules: apipb.SyncSettings_CELFallbackRules_builder{
+			Rules: []*apipb.SyncSettings_CELFallbackRule{
+				apipb.SyncSettings_CELFallbackRule_builder{
+					CelExpr:                "true",
+					EventDetailButtonLabel: proto.String("Ask IT"),
+				}.Build(),
+			},
+		}.Build(),
+		ProcessOverrides: apipb.SyncSettings_ProcessOverrides_builder{
+			Overrides: []*apipb.FileAccessRule_ProcessOverride{
+				apipb.FileAccessRule_ProcessOverride_builder{
+					Type:   apipb.FileAccessProcessType_FILE_ACCESS_PROCESS_TYPE_TEAM_ID,
+					Value:  "EQHXZ8M8AV",
+					Action: apipb.FileAccessProcessAction_FILE_ACCESS_PROCESS_ACTION_DENY,
+				}.Build(),
+			},
+		}.Build(),
+	}.Build()
+
+	model, diags := syncSettingsProtoToModel(ctx, original)
+	if diags.HasError() {
+		t.Fatalf("proto -> model: %v", diags)
+	}
+
+	round, diags := syncSettingsModelToProto(ctx, &model)
+	if diags.HasError() {
+		t.Fatalf("model -> proto: %v", diags)
+	}
+
+	if round.GetBatchSize() != 250 {
+		t.Errorf("batch_size: got %d, want 250", round.GetBatchSize())
+	}
+	if !round.GetEnableAllEventUpload() {
+		t.Error("enable_all_event_upload erased")
+	}
+	if !round.HasAutoBundleInventory() || round.GetAutoBundleInventory() {
+		t.Error("an explicit auto_bundle_inventory = false did not survive")
+	}
+	if !round.GetStorePlatformBinaryEvents() {
+		t.Error("store_platform_binary_events erased")
+	}
+
+	ne := round.GetNetworkExtension()
+	if ne == nil || !ne.GetEnable() {
+		t.Fatalf("network extension erased: %v", ne)
+	}
+	if ne.GetFlowDefaultAction() != apipb.NetworkFlowDefaultAction_NETWORK_FLOW_DEFAULT_ACTION_DENY {
+		t.Errorf("flow_default_action: got %v, want DENY", ne.GetFlowDefaultAction())
+	}
+
+	rules := round.GetCelFallbackRules().GetRules()
+	if len(rules) != 1 || rules[0].GetEventDetailButtonLabel() != "Ask IT" {
+		t.Errorf("cel fallback event_detail_button_label erased: %v", rules)
+	}
+
+	overrides := round.GetProcessOverrides().GetOverrides()
+	if len(overrides) != 1 || overrides[0].GetValue() != "EQHXZ8M8AV" {
+		t.Fatalf("process_overrides erased: %v", overrides)
+	}
+	if overrides[0].GetAction() != apipb.FileAccessProcessAction_FILE_ACCESS_PROCESS_ACTION_DENY {
+		t.Errorf("override action: got %v, want DENY", overrides[0].GetAction())
+	}
+}
+
+// TestSyncSettingsProcessOverridesUnsetVsEmpty checks the presence distinction
+// the proto documents: absent means "inherit from a lower-precedence tag",
+// while an empty list means "managed, explicitly no overrides".
+func TestSyncSettingsProcessOverridesUnsetVsEmpty(t *testing.T) {
+	ctx := context.Background()
+
+	unset, diags := syncSettingsProtoToModel(ctx, apipb.SyncSettings_builder{Tag: "dev"}.Build())
+	if diags.HasError() {
+		t.Fatalf("unexpected diagnostics: %v", diags)
+	}
+	if !unset.ProcessOverrides.IsNull() {
+		t.Errorf("absent process_overrides should be null, got %v", unset.ProcessOverrides)
+	}
+	if round, _ := syncSettingsModelToProto(ctx, &unset); round.HasProcessOverrides() {
+		t.Error("a null process_overrides must send no message")
+	}
+
+	empty, diags := syncSettingsProtoToModel(ctx, apipb.SyncSettings_builder{
+		Tag:              "dev",
+		ProcessOverrides: apipb.SyncSettings_ProcessOverrides_builder{}.Build(),
+	}.Build())
+	if diags.HasError() {
+		t.Fatalf("unexpected diagnostics: %v", diags)
+	}
+	if empty.ProcessOverrides.IsNull() || len(empty.ProcessOverrides.Elements()) != 0 {
+		t.Errorf("an empty process_overrides should be an empty list, got %v", empty.ProcessOverrides)
+	}
+	round, diags := syncSettingsModelToProto(ctx, &empty)
+	if diags.HasError() {
+		t.Fatalf("unexpected diagnostics: %v", diags)
+	}
+	if !round.HasProcessOverrides() || len(round.GetProcessOverrides().GetOverrides()) != 0 {
+		t.Error("an empty process_overrides must send an empty message")
+	}
+}
+
 // TestSyncSettingsOnDemandUnspecifiedStateIsNull checks a server-reported
 // UNSPECIFIED state is not written into state. The schema's own OneOf validator
 // rejects it, so writing it made the next plan fail on state the provider wrote.
@@ -351,5 +472,39 @@ func TestSyncSettingsOnDemandUnspecifiedStateIsNull(t *testing.T) {
 	}
 	if model.OnDemandAdminMode == nil || !model.OnDemandAdminMode.State.IsNull() {
 		t.Errorf("admin mode state: got %v, want null", model.OnDemandAdminMode)
+	}
+}
+
+// TestSyncSettingsCelFallbackButtonLabelLength pins the label to the max_len
+// the API enforces, so an over-long value fails the plan rather than the apply.
+func TestSyncSettingsCelFallbackButtonLabelLength(t *testing.T) {
+	ctx := context.Background()
+	var sResp resource.SchemaResponse
+	(&SyncSettingsResource{}).Schema(ctx, resource.SchemaRequest{}, &sResp)
+
+	block, ok := sResp.Schema.Blocks["cel_fallback_rule"].(schema.ListNestedBlock)
+	if !ok {
+		t.Fatal("cel_fallback_rule is not a ListNestedBlock")
+	}
+	attribute, ok := block.NestedObject.Attributes["event_detail_button_label"].(schema.StringAttribute)
+	if !ok {
+		t.Fatal("event_detail_button_label is not a StringAttribute")
+	}
+
+	validate := func(s string) diag.Diagnostics {
+		var diags diag.Diagnostics
+		for _, v := range attribute.Validators {
+			vResp := &validator.StringResponse{}
+			v.ValidateString(ctx, validator.StringRequest{ConfigValue: types.StringValue(s)}, vResp)
+			diags.Append(vResp.Diagnostics...)
+		}
+		return diags
+	}
+
+	if diags := validate(strings.Repeat("a", celFallbackButtonLabelMaxLen)); diags.HasError() {
+		t.Errorf("a %d-character label should be accepted: %v", celFallbackButtonLabelMaxLen, diags)
+	}
+	if diags := validate(strings.Repeat("a", celFallbackButtonLabelMaxLen+1)); !diags.HasError() {
+		t.Errorf("a %d-character label should be rejected", celFallbackButtonLabelMaxLen+1)
 	}
 }
