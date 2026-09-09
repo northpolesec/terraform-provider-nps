@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/list"
 	listschema "github.com/hashicorp/terraform-plugin-framework/list/schema"
@@ -56,13 +57,25 @@ type APIKeyResourceModel struct {
 	Expires     types.String `tfsdk:"expires"`
 }
 
-// defaultAPIKeyLifetimeHours is the lifetime applied when the configuration
-// leaves lifetime unset.
-const defaultAPIKeyLifetimeHours = 24 * 30
+const (
+	// defaultAPIKeyLifetimeHours is the lifetime applied when the configuration
+	// leaves lifetime unset.
+	defaultAPIKeyLifetimeHours = 24 * 30
 
-// apiKeyLifetime is the lifetime the configuration asks for.
+	// The bounds the API enforces on CreateAPIKeyRequest.lifetime (a duration
+	// of at least 1 hour and at most 365 days), in the hours this attribute is
+	// expressed in. Validating against them keeps an out-of-range lifetime a
+	// plan error rather than an apply failure, and keeps the conversion below
+	// well away from the int64 nanosecond overflow at ~2.56 million hours.
+	minAPIKeyLifetimeHours = 1
+	maxAPIKeyLifetimeHours = 365 * 24
+)
+
+// apiKeyLifetime is the lifetime the configuration asks for. The schema bounds
+// lifetime to minAPIKeyLifetimeHours..maxAPIKeyLifetimeHours, so the only
+// value needing a fallback here is an unset one.
 func apiKeyLifetime(lifetime types.Int64) time.Duration {
-	if lifetime.IsNull() || lifetime.ValueInt64() == 0 {
+	if lifetime.IsNull() {
 		return defaultAPIKeyLifetimeHours * time.Hour
 	}
 	return time.Duration(lifetime.ValueInt64()) * time.Hour
@@ -106,8 +119,11 @@ func (r *APIKeyResource) Schema(ctx context.Context, req resource.SchemaRequest,
 				},
 			},
 			"lifetime": schema.Int64Attribute{
-				MarkdownDescription: "The lifetime for this key in hours. Defaults to 30 days. Changing it re-bases `expires` on the time of the apply.",
+				MarkdownDescription: "The lifetime for this key in hours. Must be between 1 and 8760 (365 days). Omit it to default to 30 days. Changing it re-bases `expires` on the time of the apply.",
 				Optional:            true,
+				Validators: []validator.Int64{
+					int64validator.Between(minAPIKeyLifetimeHours, maxAPIKeyLifetimeHours),
+				},
 			},
 
 			// Computed value, returned from Create and refreshed on Read. Left

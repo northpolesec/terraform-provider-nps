@@ -34,7 +34,7 @@ resource "nps_workshop_apikey" "ci" {
 
 ### Optional
 
-- `lifetime` (Number) The lifetime for this key in hours. Defaults to 30 days. Changing it re-bases `expires` on the time of the apply.
+- `lifetime` (Number) The lifetime for this key in hours. Must be between 1 and 8760 (365 days). Omit it to default to 30 days. Changing it re-bases `expires` on the time of the apply.
 
 ### Read-Only
 

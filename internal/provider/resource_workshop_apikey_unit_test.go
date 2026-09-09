@@ -3,13 +3,16 @@ package provider
 
 import (
 	"context"
+	"math"
 	"testing"
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
@@ -180,12 +183,69 @@ func TestAPIKeyLifetime(t *testing.T) {
 		want time.Duration
 	}{
 		{types.Int64Null(), defaultAPIKeyLifetimeHours * time.Hour},
-		{types.Int64Value(0), defaultAPIKeyLifetimeHours * time.Hour},
+		{types.Int64Value(minAPIKeyLifetimeHours), time.Hour},
 		{types.Int64Value(48), 48 * time.Hour},
+		{types.Int64Value(maxAPIKeyLifetimeHours), maxAPIKeyLifetimeHours * time.Hour},
 	} {
 		if got := apiKeyLifetime(c.in); got != c.want {
 			t.Errorf("apiKeyLifetime(%v) = %v, want %v", c.in, got, c.want)
 		}
+	}
+}
+
+// TestAPIKeyLifetimeBounds pins the lifetime attribute to the range the API
+// accepts, so an out-of-range value is a plan error rather than an apply
+// failure. It also keeps the hours-to-Duration conversion clear of the int64
+// nanosecond overflow, which turns anything past ~2.56 million hours into a
+// negative duration.
+func TestAPIKeyLifetimeBounds(t *testing.T) {
+	ctx := context.Background()
+	var sResp resource.SchemaResponse
+	(&APIKeyResource{}).Schema(ctx, resource.SchemaRequest{}, &sResp)
+
+	attribute, ok := sResp.Schema.Attributes["lifetime"].(schema.Int64Attribute)
+	if !ok {
+		t.Fatal("lifetime is not an Int64Attribute")
+	}
+
+	validate := func(v types.Int64) diag.Diagnostics {
+		var diags diag.Diagnostics
+		for _, val := range attribute.Validators {
+			vResp := &validator.Int64Response{}
+			val.ValidateInt64(ctx, validator.Int64Request{ConfigValue: v}, vResp)
+			diags.Append(vResp.Diagnostics...)
+		}
+		return diags
+	}
+
+	for _, c := range []struct {
+		hours   int64
+		wantErr bool
+	}{
+		{-5, true},
+		{0, true}, // omit the attribute to get the default instead
+		{minAPIKeyLifetimeHours, false},
+		{720, false},
+		{maxAPIKeyLifetimeHours, false},
+		{maxAPIKeyLifetimeHours + 1, true},
+		{2562047, true},                          // the largest non-overflowing value
+		{2562048, true},                          // the first that overflows
+		{math.MaxInt64 / int64(time.Hour), true}, // ditto, derived
+	} {
+		diags := validate(types.Int64Value(c.hours))
+		if diags.HasError() != c.wantErr {
+			t.Errorf("lifetime = %d: got error %v, want %v (%v)", c.hours, diags.HasError(), c.wantErr, diags)
+		}
+	}
+
+	// An unset lifetime is what selects the default, so it must validate.
+	if diags := validate(types.Int64Null()); diags.HasError() {
+		t.Errorf("an unset lifetime should be accepted: %v", diags)
+	}
+
+	// The default itself has to sit inside the accepted range.
+	if defaultAPIKeyLifetimeHours < minAPIKeyLifetimeHours || defaultAPIKeyLifetimeHours > maxAPIKeyLifetimeHours {
+		t.Errorf("default lifetime %d is outside the accepted range", defaultAPIKeyLifetimeHours)
 	}
 }
 
