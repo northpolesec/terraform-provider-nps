@@ -43,7 +43,7 @@ resource "nps_workshop_file_access_rule" "ChromeCookies" {
 ### Required
 
 - `name` (String) The name for this file access rule. Rule names are unique per-tag.
-- `rule_type` (String) The type of this file access rule. The possible values are: `PathsWithAllowedProcesses`, `PathsWithDeniedProcesses`, `ProcessesWithAllowedPaths`, `ProcessesWithDeniedPaths`.
+- `rule_type` (String) The type of this file access rule. The possible values are: `PathsWithAllowedProcesses`, `PathsWithDeniedProcesses`, `ProcessesWithAllowedPaths`, `ProcessesWithDeniedPaths`. The proto spellings (`PATHS_WITH_ALLOWED_PROCESSES` and the `FILE_ACCESS_RULE_TYPE_`-prefixed form) are accepted aliases.
 - `tag` (String) The tag for this file access rule. The tag determines which hosts this rule will apply to. The tag must already exist in Workshop.
 
 ### Optional
