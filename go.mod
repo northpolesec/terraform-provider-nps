@@ -1,6 +1,6 @@
 module github.com/northpolesec/terraform-provider-nps
 
-go 1.25.8
+go 1.26.0
 
 require (
 	buf.build/gen/go/northpolesec/protos/protocolbuffers/go v1.36.12-20260904135605-a0b311108b7c.2
@@ -13,7 +13,7 @@ require (
 	github.com/hashicorp/terraform-plugin-log v0.11.0
 	github.com/hashicorp/terraform-plugin-testing v1.13.3
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c
-	golang.org/x/oauth2 v0.36.0
+	golang.org/x/oauth2 v0.37.0
 	google.golang.org/grpc v1.83.2
 	google.golang.org/protobuf v1.36.12
 )
