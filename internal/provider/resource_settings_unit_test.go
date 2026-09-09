@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework/attr"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/defaults"
@@ -245,6 +247,88 @@ func TestCIDRValidator(t *testing.T) {
 	}
 }
 
+// TestRiskEngineOnlyEvaluateBlockedEventsRoundtrip is the regression test for a
+// field the model did not carry. UpdateRiskEngineSettings replaces the whole
+// message, so an unmodelled field was reset to unset on every apply.
+func TestRiskEngineOnlyEvaluateBlockedEventsRoundtrip(t *testing.T) {
+	ctx := context.Background()
+
+	original := apipb.RiskEngineSettings_builder{
+		OnlyEvaluateBlockedEvents: proto.Bool(true),
+	}.Build()
+
+	model, diags := riskEngineProtoToModel(ctx, original)
+	if diags.HasError() {
+		t.Fatalf("unexpected diagnostics: %v", diags)
+	}
+	if !model.OnlyEvaluateBlockedEvents.ValueBool() {
+		t.Error("only_evaluate_blocked_events not read into the model")
+	}
+
+	round, diags := riskEngineModelToProto(ctx, &model)
+	if diags.HasError() {
+		t.Fatalf("unexpected diagnostics: %v", diags)
+	}
+	if !round.HasOnlyEvaluateBlockedEvents() || !round.GetOnlyEvaluateBlockedEvents() {
+		t.Error("only_evaluate_blocked_events erased by the round trip")
+	}
+}
+
+// TestAutoUpdateSettingsIncludesDaysOfWeek is the regression test for the same
+// class of bug on auto-update settings: days_of_week set in the UI used to be
+// wiped by the first terraform apply.
+func TestAutoUpdateSettingsIncludesDaysOfWeek(t *testing.T) {
+	ctx := context.Background()
+	var diags diag.Diagnostics
+
+	days := types.SetValueMust(types.Int64Type, []attr.Value{
+		types.Int64Value(1), types.Int64Value(3),
+	})
+	got := autoUpdateSettings(ctx, AutoUpdateSettingsResourceModel{
+		Mode:       types.StringValue("AUTO_UPDATE_MODE_ENABLED_ALL"),
+		StartHour:  types.Int64Value(20),
+		DaysOfWeek: days,
+	}, &diags)
+	if diags.HasError() {
+		t.Fatalf("unexpected diagnostics: %v", diags)
+	}
+
+	if got.GetMode() != apipb.AutoUpdateMode_AUTO_UPDATE_MODE_ENABLED_ALL {
+		t.Errorf("mode: got %v", got.GetMode())
+	}
+	if got.GetStartHour() != 20 {
+		t.Errorf("start_hour: got %d, want 20", got.GetStartHour())
+	}
+	if len(got.GetDaysOfWeek()) != 2 {
+		t.Fatalf("days_of_week: got %v, want two entries", got.GetDaysOfWeek())
+	}
+
+	// A round trip back through the model must be stable. The set is unordered,
+	// so compare via the set value itself.
+	back := int32sToTFInt64Set(ctx, got.GetDaysOfWeek(), &diags)
+	if diags.HasError() {
+		t.Fatalf("unexpected diagnostics: %v", diags)
+	}
+	if !back.Equal(days) {
+		t.Errorf("days_of_week round trip: got %v, want %v", back, days)
+	}
+}
+
+func TestAutoUpdateDaysOfWeekUnsetIsNull(t *testing.T) {
+	ctx := context.Background()
+	var diags diag.Diagnostics
+
+	if got := int32sToTFInt64Set(ctx, nil, &diags); !got.IsNull() {
+		t.Errorf("got %v, want a null set", got)
+	}
+	if got := tfInt64SetToInt32s(ctx, types.SetNull(types.Int64Type), &diags); got != nil {
+		t.Errorf("got %v, want no days sent", got)
+	}
+	if diags.HasError() {
+		t.Fatalf("unexpected diagnostics: %v", diags)
+	}
+}
+
 type fakeAutoUpdateClient struct {
 	svcpb.WorkshopServiceClient
 
@@ -262,7 +346,8 @@ func (f *fakeAutoUpdateClient) GetAutoUpdateSettings(ctx context.Context, in *ap
 func TestAutoUpdateReadKeepsPriorModeOnUnspecified(t *testing.T) {
 	ctx := context.Background()
 	prior := AutoUpdateSettingsResourceModel{
-		Mode: types.StringValue("AUTO_UPDATE_MODE_ENABLED_ALL"),
+		Mode:       types.StringValue("AUTO_UPDATE_MODE_ENABLED_ALL"),
+		DaysOfWeek: types.SetNull(types.Int64Type),
 	}
 
 	read := func(settings *apipb.AutoUpdateSettings) AutoUpdateSettingsResourceModel {
@@ -294,10 +379,14 @@ func TestAutoUpdateReadKeepsPriorModeOnUnspecified(t *testing.T) {
 	}
 
 	got := read(apipb.AutoUpdateSettings_builder{
-		Mode: apipb.AutoUpdateMode_AUTO_UPDATE_MODE_UNSPECIFIED,
+		Mode:       apipb.AutoUpdateMode_AUTO_UPDATE_MODE_UNSPECIFIED,
+		DaysOfWeek: []int32{2},
 	}.Build())
 	if got.Mode.ValueString() != "AUTO_UPDATE_MODE_ENABLED_ALL" {
 		t.Errorf("mode: got %q, want the prior value", got.Mode.ValueString())
+	}
+	if len(got.DaysOfWeek.Elements()) != 1 {
+		t.Errorf("days_of_week: got %v, want one entry", got.DaysOfWeek)
 	}
 
 	// A concrete mode from the server still wins.
@@ -417,5 +506,51 @@ func TestMPAUpdateRefreshesFromServer(t *testing.T) {
 	}
 	if !final.ExcludeApiKeys.ValueBool() {
 		t.Errorf("exclude_api_keys: got %v, want the server's true", final.ExcludeApiKeys)
+	}
+}
+
+// TestAutoUpdateDaysOfWeekSizeValidator pins down the size bounds. An empty set
+// means "any day", exactly like an unset attribute, and the server cannot
+// report the difference back on a plain repeated field: it would refresh to
+// null and be proposed again on every plan. SizeBetween's upper bound mirrors
+// the proto's max_items.
+func TestAutoUpdateDaysOfWeekSizeValidator(t *testing.T) {
+	ctx := context.Background()
+	var sResp resource.SchemaResponse
+	(&AutoUpdateSettingsResource{}).Schema(ctx, resource.SchemaRequest{}, &sResp)
+
+	attribute, ok := sResp.Schema.Attributes["days_of_week"].(schema.SetAttribute)
+	if !ok {
+		t.Fatal("days_of_week is not a SetAttribute")
+	}
+
+	days := func(n int) types.Set {
+		elems := make([]attr.Value, 0, n)
+		for i := range n {
+			elems = append(elems, types.Int64Value(int64(i)))
+		}
+		return types.SetValueMust(types.Int64Type, elems)
+	}
+	validate := func(set types.Set) diag.Diagnostics {
+		var diags diag.Diagnostics
+		for _, v := range attribute.Validators {
+			vResp := &validator.SetResponse{}
+			v.ValidateSet(ctx, validator.SetRequest{ConfigValue: set}, vResp)
+			diags.Append(vResp.Diagnostics...)
+		}
+		return diags
+	}
+
+	if diags := validate(days(0)); !diags.HasError() {
+		t.Error("an empty days_of_week set should be rejected")
+	}
+	if diags := validate(types.SetNull(types.Int64Type)); diags.HasError() {
+		t.Errorf("an unset days_of_week should be accepted: %v", diags)
+	}
+	if diags := validate(days(7)); diags.HasError() {
+		t.Errorf("all seven days should be accepted: %v", diags)
+	}
+	if diags := validate(types.SetValueMust(types.Int64Type, []attr.Value{types.Int64Value(7)})); !diags.HasError() {
+		t.Error("a day outside 0-6 should be rejected")
 	}
 }

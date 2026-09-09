@@ -4,6 +4,7 @@ package provider
 import (
 	"context"
 	"fmt"
+	"math"
 	"regexp"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
@@ -50,14 +51,20 @@ type SyncSettingsResourceModel struct {
 	Tag types.String `tfsdk:"tag"`
 
 	ClientMode                 types.String `tfsdk:"client_mode"`
+	BatchSize                  types.Int64  `tfsdk:"batch_size"`
 	EnableTransitiveRules      types.Bool   `tfsdk:"enable_transitive_rules"`
+	EnableAllEventUpload       types.Bool   `tfsdk:"enable_all_event_upload"`
+	AutoBundleInventory        types.Bool   `tfsdk:"auto_bundle_inventory"`
+	StorePlatformBinaryEvents  types.Bool   `tfsdk:"store_platform_binary_events"`
 	TelemetryEnabled           types.Bool   `tfsdk:"telemetry_enabled"`
 	NetworkExtensionEnabled    types.Bool   `tfsdk:"network_extension_enabled"`
+	NetworkFlowDefaultAction   types.String `tfsdk:"network_flow_default_action"`
 	AllowedPathRegex           types.String `tfsdk:"allowed_path_regex"`
 	BlockedPathRegex           types.String `tfsdk:"blocked_path_regex"`
 	FullSyncInterval           types.Int64  `tfsdk:"full_sync_interval"`
 	PushSyncInterval           types.Int64  `tfsdk:"push_sync_interval"`
 	TelemetryFilterExpressions types.List   `tfsdk:"telemetry_filter_expressions"`
+	ProcessOverrides           types.List   `tfsdk:"process_overrides"`
 
 	CelFallbackRule               []SyncSettingsCelFallbackRuleModel     `tfsdk:"cel_fallback_rule"`
 	OnDemandMonitorMode           *SyncSettingsOnDemandMonitorModeModel  `tfsdk:"on_demand_monitor_mode"`
@@ -68,9 +75,10 @@ type SyncSettingsResourceModel struct {
 }
 
 type SyncSettingsCelFallbackRuleModel struct {
-	Expression types.String `tfsdk:"expression"`
-	CustomMsg  types.String `tfsdk:"custom_msg"`
-	CustomURL  types.String `tfsdk:"custom_url"`
+	Expression             types.String `tfsdk:"expression"`
+	CustomMsg              types.String `tfsdk:"custom_msg"`
+	CustomURL              types.String `tfsdk:"custom_url"`
+	EventDetailButtonLabel types.String `tfsdk:"event_detail_button_label"`
 }
 
 type SyncSettingsOnDemandMonitorModeModel struct {
@@ -120,6 +128,15 @@ var (
 	syncSettingsTagRegex = regexp.MustCompile(`^[\p{L}\p{N}.:_-]+$`)
 )
 
+// networkFlowDefaultActionPrefix is stripped from NetworkFlowDefaultAction
+// values in HCL: users write DENY, the proto says
+// NETWORK_FLOW_DEFAULT_ACTION_DENY. Both spellings are accepted.
+const networkFlowDefaultActionPrefix = "NETWORK_FLOW_DEFAULT_ACTION_"
+
+// celFallbackButtonLabelMaxLen mirrors the max_len the API enforces on
+// SyncSettings.CELFallbackRule.event_detail_button_label.
+const celFallbackButtonLabelMaxLen = 48
+
 func (r *SyncSettingsResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_workshop_sync_settings"
 }
@@ -153,9 +170,32 @@ func (r *SyncSettingsResource) Schema(ctx context.Context, req resource.SchemaRe
 					stringvalidator.OneOf(syncSettingsClientModeValues...),
 				},
 			},
+			"batch_size": schema.Int64Attribute{
+				Description:         "Number of events a host uploads per request.",
+				MarkdownDescription: "Number of events a host uploads per request.",
+				Optional:            true,
+				Validators: []validator.Int64{
+					int64validator.Between(1, int64(math.MaxUint32)),
+				},
+			},
 			"enable_transitive_rules": schema.BoolAttribute{
 				Description:         "Whether transitive rule creation is enabled.",
 				MarkdownDescription: "Whether transitive rule creation is enabled.",
+				Optional:            true,
+			},
+			"enable_all_event_upload": schema.BoolAttribute{
+				Description:         "Whether hosts upload every execution event rather than only blocked and unknown ones.",
+				MarkdownDescription: "Whether hosts upload every execution event rather than only blocked and unknown ones.",
+				Optional:            true,
+			},
+			"auto_bundle_inventory": schema.BoolAttribute{
+				Description:         "Kill switch for automatically requesting bundle inventory from hosts for allow-unknown events. Leaving it unset means enabled, since the global default sets it to true.",
+				MarkdownDescription: "Kill switch for automatically requesting bundle inventory from hosts for allow-unknown events. Leaving it unset means enabled, since the global default sets it to `true`.",
+				Optional:            true,
+			},
+			"store_platform_binary_events": schema.BoolAttribute{
+				Description:         "Whether Workshop writes a per-event row for every execution it allowed because the binary ships with the OS (ALLOW_PLATFORM). These are the highest-volume decision by a wide margin, so storage is opt-in: leaving it unset keeps only the aggregate counts. Workshop-side only, never sent to the Santa agent.",
+				MarkdownDescription: "Whether Workshop writes a per-event row for every execution it allowed because the binary ships with the OS (`ALLOW_PLATFORM`). These are the highest-volume decision by a wide margin, so storage is opt-in: leaving it unset keeps only the aggregate counts. Workshop-side only, never sent to the Santa agent.",
 				Optional:            true,
 			},
 			"telemetry_enabled": schema.BoolAttribute{
@@ -167,6 +207,17 @@ func (r *SyncSettingsResource) Schema(ctx context.Context, req resource.SchemaRe
 				Description:         "Whether the Santa network extension is enabled.",
 				MarkdownDescription: "Whether the Santa network extension is enabled.",
 				Optional:            true,
+			},
+			"network_flow_default_action": schema.StringAttribute{
+				Description:         "Default action applied to network flows that match no network flow rule. One of: ALLOW, DENY. The NETWORK_FLOW_DEFAULT_ACTION_-prefixed spellings are accepted aliases.",
+				MarkdownDescription: "Default action applied to network flows that match no network flow rule. One of: `ALLOW`, `DENY`. The `NETWORK_FLOW_DEFAULT_ACTION_`-prefixed spellings are accepted aliases.",
+				Optional:            true,
+				Validators: []validator.String{
+					stringvalidator.OneOf(utils.ProtoEnumAcceptedValues(apipb.NetworkFlowDefaultAction(0).Descriptor(), networkFlowDefaultActionPrefix)...),
+				},
+				PlanModifiers: []planmodifier.String{
+					enumForm(networkFlowDefaultActionPrefix),
+				},
 			},
 			"allowed_path_regex": schema.StringAttribute{
 				Description:         "Regex matching paths whose executions are allowed. Set to an empty string to explicitly clear any lower-precedence tag's value.",
@@ -200,6 +251,72 @@ func (r *SyncSettingsResource) Schema(ctx context.Context, req resource.SchemaRe
 				Optional:            true,
 				ElementType:         types.StringType,
 			},
+			"process_overrides": schema.ListNestedAttribute{
+				Description:         "Processes composed into path-centric file access rules at rule download time. Resolved per host wholesale: the highest-priority tag that sets this attribute wins outright, and lists are never merged across tags. Unset leaves the field unspecified (lower-precedence tag applies); an empty list explicitly declares no overrides. Each entry must be unique on (type, value), and action must be concrete here since there is no rule to inherit from.",
+				MarkdownDescription: "Processes composed into path-centric file access rules at rule download time. Resolved per host wholesale: the highest-priority tag that sets this attribute wins outright, and lists are never merged across tags.\n\nUnset leaves the field unspecified (lower-precedence tag applies); an empty list explicitly declares no overrides. Each entry must be unique on `(type, value)`, and `action` must be concrete here since there is no rule to inherit from.",
+				Optional:            true,
+				NestedObject: schema.NestedAttributeObject{
+					Attributes: map[string]schema.Attribute{
+						"type": schema.StringAttribute{
+							Description:         "Which kind of process matcher this entry applies to. The possible values are: BINARY_PATH, CD_HASH, SIGNING_ID, CERTIFICATE_SHA256, and TEAM_ID. The FILE_ACCESS_PROCESS_TYPE_-prefixed spellings are accepted aliases.",
+							MarkdownDescription: "Which kind of process matcher this entry applies to. The possible values are: `BINARY_PATH`, `CD_HASH`, `SIGNING_ID`, `CERTIFICATE_SHA256`, and `TEAM_ID`. The `FILE_ACCESS_PROCESS_TYPE_`-prefixed spellings are accepted aliases.",
+							Required:            true,
+							Validators: []validator.String{
+								stringvalidator.OneOf(utils.ProtoEnumAcceptedValues(apipb.FileAccessProcessType(0).Descriptor(), fileAccessProcessTypePrefix)...),
+							},
+							PlanModifiers: []planmodifier.String{
+								enumForm(fileAccessProcessTypePrefix),
+							},
+						},
+						"value": schema.StringAttribute{
+							Description:         "The process matcher value.",
+							MarkdownDescription: "The process matcher value.",
+							Required:            true,
+						},
+						"action": schema.StringAttribute{
+							Description:         "The action composed rules take for the process. The possible values are: ALLOW, AUDIT, and DENY. Required here: composition order is derived from the action, and there is no rule outcome to inherit. The FILE_ACCESS_PROCESS_ACTION_-prefixed spellings are accepted aliases.",
+							MarkdownDescription: "The action composed rules take for the process. The possible values are: `ALLOW`, `AUDIT`, and `DENY`. Required here: composition order is derived from the action, and there is no rule outcome to inherit. The `FILE_ACCESS_PROCESS_ACTION_`-prefixed spellings are accepted aliases.",
+							Required:            true,
+							Validators: []validator.String{
+								stringvalidator.OneOf(utils.ProtoEnumAcceptedValues(apipb.FileAccessProcessAction(0).Descriptor(), fileAccessProcessActionPrefix)...),
+							},
+							PlanModifiers: []planmodifier.String{
+								enumForm(fileAccessProcessActionPrefix),
+							},
+						},
+						"allow_read_access": schema.BoolAttribute{
+							Description:         "Overrides the composed rule's allow_read_access for this process. Unset inherits it.",
+							MarkdownDescription: "Overrides the composed rule's `allow_read_access` for this process. Unset inherits it.",
+							Optional:            true,
+						},
+						"enable_silent_mode": schema.BoolAttribute{
+							Description:         "Overrides the composed rule's enable_silent_mode for this process. Unset inherits it.",
+							MarkdownDescription: "Overrides the composed rule's `enable_silent_mode` for this process. Unset inherits it.",
+							Optional:            true,
+						},
+						"enable_silent_tty_mode": schema.BoolAttribute{
+							Description:         "Overrides the composed rule's enable_silent_tty_mode for this process. Unset inherits it.",
+							MarkdownDescription: "Overrides the composed rule's `enable_silent_tty_mode` for this process. Unset inherits it.",
+							Optional:            true,
+						},
+						"block_message": schema.StringAttribute{
+							Description:         "Overrides the composed rule's block_message for this process. Unset inherits it.",
+							MarkdownDescription: "Overrides the composed rule's `block_message` for this process. Unset inherits it.",
+							Optional:            true,
+						},
+						"event_detail_url": schema.StringAttribute{
+							Description:         "Overrides the composed rule's event_detail_url for this process. Unset inherits it.",
+							MarkdownDescription: "Overrides the composed rule's `event_detail_url` for this process. Unset inherits it.",
+							Optional:            true,
+						},
+						"event_detail_text": schema.StringAttribute{
+							Description:         "Overrides the composed rule's event_detail_text for this process. Unset inherits it.",
+							MarkdownDescription: "Overrides the composed rule's `event_detail_text` for this process. Unset inherits it.",
+							Optional:            true,
+						},
+					},
+				},
+			},
 		},
 
 		Blocks: map[string]schema.Block{
@@ -222,6 +339,16 @@ func (r *SyncSettingsResource) Schema(ctx context.Context, req resource.SchemaRe
 							Description:         "Optional custom URL shown to the user when the rule blocks.",
 							MarkdownDescription: "Optional custom URL shown to the user when the rule blocks.",
 							Optional:            true,
+						},
+						"event_detail_button_label": schema.StringAttribute{
+							Description:         "Optional label for the button that opens custom_url. At most 48 characters.",
+							MarkdownDescription: "Optional label for the button that opens `custom_url`. At most 48 characters.",
+							Optional:            true,
+							Validators: []validator.String{
+								// Mirrors the proto's max_len, so an over-long label
+								// fails the plan instead of the apply.
+								stringvalidator.LengthAtMost(celFallbackButtonLabelMaxLen),
+							},
 						},
 					},
 				},
@@ -755,7 +882,11 @@ func syncSettingsModelToProto(ctx context.Context, m *SyncSettingsResourceModel)
 
 	b := apipb.SyncSettings_builder{
 		Tag:                                     m.Tag.ValueString(),
+		BatchSize:                               tfInt64ToUint32Ptr(m.BatchSize),
 		EnableTransitiveRules:                   tfBoolToPtr(m.EnableTransitiveRules),
+		EnableAllEventUpload:                    tfBoolToPtr(m.EnableAllEventUpload),
+		AutoBundleInventory:                     tfBoolToPtr(m.AutoBundleInventory),
+		StorePlatformBinaryEvents:               tfBoolToPtr(m.StorePlatformBinaryEvents),
 		AllowedPathRegex:                        tfStringToPtr(m.AllowedPathRegex),
 		BlockedPathRegex:                        tfStringToPtr(m.BlockedPathRegex),
 		FullSyncIntervalSeconds:                 tfInt64ToUint32Ptr(m.FullSyncInterval),
@@ -766,10 +897,31 @@ func syncSettingsModelToProto(ctx context.Context, m *SyncSettingsResourceModel)
 		b.ClientMode = apipb.ClientMode(apipb.ClientMode_value[m.ClientMode.ValueString()])
 	}
 
-	if !m.NetworkExtensionEnabled.IsNull() && !m.NetworkExtensionEnabled.IsUnknown() {
-		b.NetworkExtension = apipb.SyncSettings_NetworkExtension_builder{
+	// Send the NetworkExtension message when either of its arms is configured,
+	// so setting one does not erase the other.
+	neSet := !m.NetworkExtensionEnabled.IsNull() && !m.NetworkExtensionEnabled.IsUnknown()
+	actionSet := !m.NetworkFlowDefaultAction.IsNull() && !m.NetworkFlowDefaultAction.IsUnknown()
+	if neSet || actionSet {
+		neB := apipb.SyncSettings_NetworkExtension_builder{
 			Enable: tfBoolToPtr(m.NetworkExtensionEnabled),
-		}.Build()
+		}
+		if actionSet {
+			neB.FlowDefaultAction = apipb.NetworkFlowDefaultAction(
+				apipb.NetworkFlowDefaultAction_value[utils.NormalizeEnum(m.NetworkFlowDefaultAction.ValueString(), networkFlowDefaultActionPrefix)],
+			).Enum()
+		}
+		b.NetworkExtension = neB.Build()
+	}
+
+	// Message presence distinguishes "unmanaged" (inherit) from "managed,
+	// empty" (explicitly no overrides), so a null list sends no message while
+	// an empty list sends an empty one.
+	if !m.ProcessOverrides.IsNull() && !m.ProcessOverrides.IsUnknown() {
+		overrides := fileAccessProcessOverridesToProto(ctx, m.ProcessOverrides, &diags)
+		if diags.HasError() {
+			return nil, diags
+		}
+		b.ProcessOverrides = apipb.SyncSettings_ProcessOverrides_builder{Overrides: overrides}.Build()
 	}
 
 	if !m.TelemetryFilterExpressions.IsNull() && !m.TelemetryFilterExpressions.IsUnknown() {
@@ -788,9 +940,10 @@ func syncSettingsModelToProto(ctx context.Context, m *SyncSettingsResourceModel)
 		rules := make([]*apipb.SyncSettings_CELFallbackRule, len(m.CelFallbackRule))
 		for i, r := range m.CelFallbackRule {
 			rules[i] = apipb.SyncSettings_CELFallbackRule_builder{
-				CelExpr:   r.Expression.ValueString(),
-				CustomMsg: tfStringToPtr(r.CustomMsg),
-				CustomUrl: tfStringToPtr(r.CustomURL),
+				CelExpr:                r.Expression.ValueString(),
+				CustomMsg:              tfStringToPtr(r.CustomMsg),
+				CustomUrl:              tfStringToPtr(r.CustomURL),
+				EventDetailButtonLabel: tfStringToPtr(r.EventDetailButtonLabel),
 			}.Build()
 		}
 		b.CelFallbackRules = apipb.SyncSettings_CELFallbackRules_builder{Rules: rules}.Build()
@@ -899,12 +1052,16 @@ func syncSettingsProtoToModel(ctx context.Context, ss *apipb.SyncSettings) (Sync
 	var diags diag.Diagnostics
 
 	m := SyncSettingsResourceModel{
-		Tag:                   types.StringValue(ss.GetTag()),
-		EnableTransitiveRules: boolPtrToTF(ss.EnableTransitiveRules),
-		AllowedPathRegex:      stringPtrToTF(ss.AllowedPathRegex),
-		BlockedPathRegex:      stringPtrToTF(ss.BlockedPathRegex),
-		FullSyncInterval:      uint32PtrToTFInt64(ss.FullSyncIntervalSeconds),
-		PushSyncInterval:      uint32PtrToTFInt64(ss.PushNotificationFullSyncIntervalSeconds),
+		Tag:                       types.StringValue(ss.GetTag()),
+		BatchSize:                 uint32PtrToTFInt64(ss.BatchSize),
+		EnableTransitiveRules:     boolPtrToTF(ss.EnableTransitiveRules),
+		EnableAllEventUpload:      boolPtrToTF(ss.EnableAllEventUpload),
+		AutoBundleInventory:       boolPtrToTF(ss.AutoBundleInventory),
+		StorePlatformBinaryEvents: boolPtrToTF(ss.StorePlatformBinaryEvents),
+		AllowedPathRegex:          stringPtrToTF(ss.AllowedPathRegex),
+		BlockedPathRegex:          stringPtrToTF(ss.BlockedPathRegex),
+		FullSyncInterval:          uint32PtrToTFInt64(ss.FullSyncIntervalSeconds),
+		PushSyncInterval:          uint32PtrToTFInt64(ss.PushNotificationFullSyncIntervalSeconds),
 		// telemetry_enabled is backed by the separate TelemetryConfig RPCs and
 		// is populated by the caller (Read), not from SyncSettings.
 		TelemetryEnabled: types.BoolNull(),
@@ -916,10 +1073,33 @@ func syncSettingsProtoToModel(ctx context.Context, ss *apipb.SyncSettings) (Sync
 		m.ClientMode = types.StringNull()
 	}
 
-	if ne := ss.GetNetworkExtension(); ne != nil && ne.HasEnable() {
-		m.NetworkExtensionEnabled = boolPtrToTF(ne.Enable)
-	} else {
-		m.NetworkExtensionEnabled = types.BoolNull()
+	m.NetworkExtensionEnabled = types.BoolNull()
+	m.NetworkFlowDefaultAction = types.StringNull()
+	if ne := ss.GetNetworkExtension(); ne != nil {
+		if ne.HasEnable() {
+			m.NetworkExtensionEnabled = boolPtrToTF(ne.Enable)
+		}
+		if ne.GetFlowDefaultAction() != apipb.NetworkFlowDefaultAction_NETWORK_FLOW_DEFAULT_ACTION_UNSPECIFIED {
+			// The canonical short spelling. A config using the prefixed form
+			// does not diff against it: enumForm treats the two as equal.
+			m.NetworkFlowDefaultAction = types.StringValue(
+				utils.ShortEnum(ne.GetFlowDefaultAction().String(), networkFlowDefaultActionPrefix))
+		}
+	}
+
+	m.ProcessOverrides = types.ListNull(fileAccessProcessOverrideObjectType)
+	if ss.HasProcessOverrides() {
+		// An empty list is meaningful here: it declares "managed, no
+		// overrides", which is distinct from leaving the field unset.
+		overrides := ss.GetProcessOverrides().GetOverrides()
+		if len(overrides) == 0 {
+			m.ProcessOverrides = types.ListValueMust(fileAccessProcessOverrideObjectType, nil)
+		} else {
+			m.ProcessOverrides = fileAccessProcessOverridesToModel(ctx, overrides, &diags)
+			if diags.HasError() {
+				return m, diags
+			}
+		}
 	}
 
 	if ss.HasTelemetryFilterExpressions() {
@@ -942,9 +1122,10 @@ func syncSettingsProtoToModel(ctx context.Context, ss *apipb.SyncSettings) (Sync
 		m.CelFallbackRule = make([]SyncSettingsCelFallbackRuleModel, len(rules))
 		for i, r := range rules {
 			m.CelFallbackRule[i] = SyncSettingsCelFallbackRuleModel{
-				Expression: types.StringValue(r.GetCelExpr()),
-				CustomMsg:  stringPtrToTF(r.CustomMsg),
-				CustomURL:  stringPtrToTF(r.CustomUrl),
+				Expression:             types.StringValue(r.GetCelExpr()),
+				CustomMsg:              stringPtrToTF(r.CustomMsg),
+				CustomURL:              stringPtrToTF(r.CustomUrl),
+				EventDetailButtonLabel: stringPtrToTF(r.EventDetailButtonLabel),
 			}
 		}
 	}

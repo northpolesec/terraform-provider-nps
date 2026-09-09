@@ -52,6 +52,7 @@ resource "nps_workshop_settings_risk_engine" "settings" {
 
 - `enabled` (Boolean) Whether the risk engine is enabled.
 - `local_plugins` (Attributes) Settings for plugins embedded in Workshop. (see [below for nested schema](#nestedatt--local_plugins))
+- `only_evaluate_blocked_events` (Boolean) When true, the risk engine only evaluates blockables reported by `BLOCK_UNKNOWN` events. Blockables seen only via `ALLOW_UNKNOWN` (monitor mode) events are skipped by the event pipeline and by the refresh cron. Evaluation still happens on demand when an approval is requested.
 - `plugin_timeout` (String) How long to wait for all plugins to respond (Go duration string, e.g. `"5s"`).
 - `remote_plugins` (Attributes List) Remote (webhook-based) risk engine plugins. (see [below for nested schema](#nestedatt--remote_plugins))
 
