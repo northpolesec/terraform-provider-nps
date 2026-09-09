@@ -8,6 +8,8 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/defaults"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"google.golang.org/grpc"
@@ -253,5 +255,95 @@ func TestUpsertSignalPropagatesFields(t *testing.T) {
 	}
 	if gotLabels := got.GetLabels(); len(gotLabels) != 2 {
 		t.Errorf("labels not propagated: got %v", gotLabels)
+	}
+}
+
+// TestOSTypeToModel checks the round trip of the signal's os_type. An unset
+// os_type is stored as macOS, so an UNSPECIFIED value from the server must
+// read back as MACOS: mapping it to null would diff against the schema's MACOS
+// default on every plan. A refresh keeps whichever spelling is in state.
+func TestOSTypeToModel(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		prior types.String
+		os    apipb.OSType
+		want  types.String
+	}{
+		{"unspecified reads back as macOS", types.StringNull(), apipb.OSType_OS_TYPE_UNSPECIFIED, types.StringValue("MACOS")},
+		{"unspecified keeps a prior macOS spelling", types.StringValue("OS_TYPE_MACOS"), apipb.OSType_OS_TYPE_UNSPECIFIED, types.StringValue("OS_TYPE_MACOS")},
+		{"null prior takes the short form", types.StringNull(), apipb.OSType_OS_TYPE_LINUX, types.StringValue("LINUX")},
+		{"keeps the short spelling", types.StringValue("MACOS"), apipb.OSType_OS_TYPE_MACOS, types.StringValue("MACOS")},
+		{"keeps the prefixed spelling", types.StringValue("OS_TYPE_MACOS"), apipb.OSType_OS_TYPE_MACOS, types.StringValue("OS_TYPE_MACOS")},
+		{"rewrites a real change", types.StringValue("OS_TYPE_MACOS"), apipb.OSType_OS_TYPE_WINDOWS, types.StringValue("WINDOWS")},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := osTypeToModel(c.prior, c.os); !got.Equal(c.want) {
+				t.Errorf("got %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+// TestSignalOSTypeDefaultsToMacOS pins the default down: an unset os_type is
+// stored as macOS server-side, so leaving the attribute a bare Optional would
+// refresh MACOS into state and diff against the config's null forever.
+func TestSignalOSTypeDefaultsToMacOS(t *testing.T) {
+	ctx := context.Background()
+	var sResp resource.SchemaResponse
+	(&SignalResource{}).Schema(ctx, resource.SchemaRequest{}, &sResp)
+
+	attribute, ok := sResp.Schema.Attributes["os_type"].(schema.StringAttribute)
+	if !ok {
+		t.Fatal("os_type is not a StringAttribute")
+	}
+	if !attribute.Computed {
+		t.Error("os_type must be Computed for its default to apply")
+	}
+	if attribute.Default == nil {
+		t.Fatal("os_type has no default")
+	}
+
+	dResp := &defaults.StringResponse{}
+	attribute.Default.DefaultString(ctx, defaults.StringRequest{}, dResp)
+	if dResp.PlanValue.ValueString() != "MACOS" {
+		t.Errorf("os_type default: got %q, want MACOS", dResp.PlanValue.ValueString())
+	}
+}
+
+// TestUpsertSignalPropagatesOSTypeAndProcessTree checks the two fields the
+// upsert used to drop, silently resetting them to their zero values on every
+// apply.
+func TestUpsertSignalPropagatesOSTypeAndProcessTree(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		osType types.String
+		want   apipb.OSType
+	}{
+		{"short spelling", types.StringValue("LINUX"), apipb.OSType_OS_TYPE_LINUX},
+		{"prefixed spelling", types.StringValue("OS_TYPE_WINDOWS"), apipb.OSType_OS_TYPE_WINDOWS},
+		// A null model value only reaches the upsert from a caller that bypasses
+		// the schema default; the server stores UNSPECIFIED as macOS anyway.
+		{"null sends unspecified", types.StringNull(), apipb.OSType_OS_TYPE_UNSPECIFIED},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			fake := &fakeSignalClient{}
+			r := &SignalResource{client: fake}
+
+			plan := testSignalModel()
+			plan.OsType = c.osType
+			plan.FullProcessTree = types.BoolValue(true)
+
+			if err := r.upsert(context.Background(), plan); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			got := fake.lastUpsertReq.GetSignal()
+			if got.GetOsType() != c.want {
+				t.Errorf("os_type: got %v, want %v", got.GetOsType(), c.want)
+			}
+			if !got.GetFullProcessTree() {
+				t.Error("full_process_tree not propagated")
+			}
+		})
 	}
 }

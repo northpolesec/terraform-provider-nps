@@ -39,10 +39,11 @@ type RiskEngineSettingsIdentityModel struct {
 }
 
 type RiskEngineSettingsResourceModel struct {
-	Enabled       types.Bool   `tfsdk:"enabled"`
-	PluginTimeout types.String `tfsdk:"plugin_timeout"`
-	LocalPlugins  types.Object `tfsdk:"local_plugins"`
-	RemotePlugins types.List   `tfsdk:"remote_plugins"`
+	Enabled                   types.Bool   `tfsdk:"enabled"`
+	PluginTimeout             types.String `tfsdk:"plugin_timeout"`
+	LocalPlugins              types.Object `tfsdk:"local_plugins"`
+	RemotePlugins             types.List   `tfsdk:"remote_plugins"`
+	OnlyEvaluateBlockedEvents types.Bool   `tfsdk:"only_evaluate_blocked_events"`
 }
 
 type riskLocalPluginsModel struct {
@@ -261,6 +262,11 @@ func (r *RiskEngineSettingsResource) Schema(ctx context.Context, req resource.Sc
 				NestedObject:        remotePluginNested,
 				MarkdownDescription: "Remote (webhook-based) risk engine plugins.",
 			},
+			"only_evaluate_blocked_events": schema.BoolAttribute{
+				Optional:            true,
+				Description:         "When true, the risk engine only evaluates blockables reported by BLOCK_UNKNOWN events. Blockables seen only via ALLOW_UNKNOWN (monitor mode) events are skipped by the event pipeline and by the refresh cron. Evaluation still happens on demand when an approval is requested.",
+				MarkdownDescription: "When true, the risk engine only evaluates blockables reported by `BLOCK_UNKNOWN` events. Blockables seen only via `ALLOW_UNKNOWN` (monitor mode) events are skipped by the event pipeline and by the refresh cron. Evaluation still happens on demand when an approval is requested.",
+			},
 		},
 	}
 }
@@ -412,10 +418,11 @@ func riskEngineProtoToModel(ctx context.Context, s *apipb.RiskEngineSettings) (R
 	diags.Append(d...)
 
 	return RiskEngineSettingsResourceModel{
-		Enabled:       boolPtrToTF(s.Enabled),
-		PluginTimeout: durationToTFString(s.GetPluginTimeout()),
-		LocalPlugins:  local,
-		RemotePlugins: remote,
+		Enabled:                   boolPtrToTF(s.Enabled),
+		PluginTimeout:             durationToTFString(s.GetPluginTimeout()),
+		LocalPlugins:              local,
+		RemotePlugins:             remote,
+		OnlyEvaluateBlockedEvents: boolPtrToTF(s.OnlyEvaluateBlockedEvents),
 	}, diags
 }
 
@@ -439,10 +446,11 @@ func riskEngineModelToProto(ctx context.Context, m *RiskEngineSettingsResourceMo
 	}
 
 	return apipb.RiskEngineSettings_builder{
-		Enabled:       tfBoolToPtr(m.Enabled),
-		PluginTimeout: pluginTimeout,
-		LocalPlugins:  local,
-		RemotePlugins: remote,
+		Enabled:                   tfBoolToPtr(m.Enabled),
+		PluginTimeout:             pluginTimeout,
+		LocalPlugins:              local,
+		RemotePlugins:             remote,
+		OnlyEvaluateBlockedEvents: tfBoolToPtr(m.OnlyEvaluateBlockedEvents),
 	}.Build(), diags
 }
 

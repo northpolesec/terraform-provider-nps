@@ -15,6 +15,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -48,6 +49,11 @@ func NewSignalListResource() list.ListResource {
 // spellings are deprecated aliases during a compatibility window.
 const severityPrefix = "SEVERITY_"
 
+// osTypePrefix is stripped from OSType values in HCL: users write MACOS, the
+// proto says OS_TYPE_MACOS. Both spellings are accepted, matching how the other
+// prefixed enums on this resource behave.
+const osTypePrefix = "OS_TYPE_"
+
 // SignalResource defines the resource implementation.
 type SignalResource struct {
 	client svcpb.WorkshopServiceClient
@@ -69,6 +75,9 @@ type SignalResourceModel struct {
 	Expression  types.String `tfsdk:"expression"`
 	Disabled    types.Bool   `tfsdk:"disabled"`
 	Labels      types.Set    `tfsdk:"labels"`
+
+	FullProcessTree types.Bool   `tfsdk:"full_process_tree"`
+	OsType          types.String `tfsdk:"os_type"`
 }
 
 func (r *SignalResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -135,6 +144,33 @@ func (r *SignalResource) Schema(ctx context.Context, req resource.SchemaRequest,
 				MarkdownDescription: "Free-form labels attached to the signal and copied onto each report it produces. Each label must be non-whitespace and at most 64 characters.",
 				Optional:            true,
 				ElementType:         types.StringType,
+			},
+			"full_process_tree": schema.BoolAttribute{
+				Description:         "When true a match reports the whole process tree around the matched process (siblings included) instead of just its ancestry.",
+				MarkdownDescription: "When true a match reports the whole process tree around the matched process (siblings included) instead of just its ancestry.",
+				Optional:            true,
+				Computed:            true,
+				Default:             booldefault.StaticBool(false),
+			},
+			"os_type": schema.StringAttribute{
+				Description:         "The operating system this signal applies to. The possible values are: MACOS, LINUX, and WINDOWS. Defaults to MACOS. Hosts running a different OS are sent a removal for the signal instead of the definition. The OS_TYPE_-prefixed spellings are accepted aliases.",
+				MarkdownDescription: "The operating system this signal applies to. The possible values are: `MACOS`, `LINUX`, and `WINDOWS`. Defaults to `MACOS`. Hosts running a different OS are sent a removal for the signal instead of the definition. The `OS_TYPE_`-prefixed spellings are accepted aliases.",
+				Optional:            true,
+				// An unset os_type is stored as macOS, so default to it rather
+				// than leaving a null the server will never agree with: there is
+				// no "every operating system" state, and a signal written before
+				// the field existed is macOS, the only platform supported then.
+				// Defaulting also puts the platform restriction in the plan
+				// instead of leaving it implicit.
+				Computed: true,
+				Default:  stringdefault.StaticString(utils.ShortEnum(apipb.OSType_OS_TYPE_MACOS.String(), osTypePrefix)),
+				Validators: []validator.String{
+					stringvalidator.OneOf(utils.ProtoEnumAcceptedValues(apipb.OSType(0).Descriptor(), osTypePrefix)...),
+				},
+				// Suppresses spelling-only diffs between the bare and prefixed forms.
+				PlanModifiers: []planmodifier.String{
+					enumForm(osTypePrefix),
+				},
 			},
 		},
 	}
@@ -207,6 +243,11 @@ func (r *SignalResource) upsert(ctx context.Context, data SignalResourceModel) e
 			Expression:  data.Expression.ValueString(),
 			Disabled:    data.Disabled.ValueBool(),
 			Labels:      labels,
+			// os_type carries a MACOS default, so this is normally concrete. A
+			// null value still maps to OS_TYPE_UNSPECIFIED, which the server
+			// stores as macOS: the same outcome.
+			FullProcessTree: data.FullProcessTree.ValueBool(),
+			OsType:          apipb.OSType(apipb.OSType_value[utils.NormalizeEnum(data.OsType.ValueString(), osTypePrefix)]),
 		}.Build(),
 	}.Build())
 	return err
@@ -259,6 +300,8 @@ func (r *SignalResource) Read(ctx context.Context, req resource.ReadRequest, res
 	data.Expression = types.StringValue(signal.GetExpression())
 	data.Disabled = types.BoolValue(signal.GetDisabled())
 	data.Labels = stringSetOrNull(ctx, signal.GetLabels(), &resp.Diagnostics)
+	data.FullProcessTree = types.BoolValue(signal.GetFullProcessTree())
+	data.OsType = osTypeToModel(data.OsType, signal.GetOsType())
 	if signal.GetDescription() != "" {
 		data.Description = types.StringValue(signal.GetDescription())
 	}
@@ -307,6 +350,17 @@ func (r *SignalResource) Delete(ctx context.Context, req resource.DeleteRequest,
 		return
 	}
 	tflog.Info(ctx, fmt.Sprintf("Deleted signal: %q (tag %q)", data.Name.ValueString(), data.Tag.ValueString()))
+}
+
+// osTypeToModel maps a server OSType onto the model, keeping the spelling
+// already in state when both name the same value. OS_TYPE_UNSPECIFIED is
+// stored as macOS, so it reads back as MACOS rather than as a null the
+// configuration's MACOS default would diff against on every plan.
+func osTypeToModel(prior types.String, os apipb.OSType) types.String {
+	if os == apipb.OSType_OS_TYPE_UNSPECIFIED {
+		os = apipb.OSType_OS_TYPE_MACOS
+	}
+	return types.StringValue(utils.MatchEnumForm(prior.ValueString(), os.String(), osTypePrefix))
 }
 
 // signalReadFilter builds the ListSignals filter that selects the single
@@ -393,6 +447,9 @@ func (r *SignalResource) List(ctx context.Context, req list.ListRequest, stream 
 					Expression: types.StringValue(signal.GetExpression()),
 					Disabled:   types.BoolValue(signal.GetDisabled()),
 					Labels:     stringSetOrNull(ctx, signal.GetLabels(), &result.Diagnostics),
+
+					FullProcessTree: types.BoolValue(signal.GetFullProcessTree()),
+					OsType:          osTypeToModel(types.StringNull(), signal.GetOsType()),
 				}
 				if signal.GetDescription() != "" {
 					model.Description = types.StringValue(signal.GetDescription())
