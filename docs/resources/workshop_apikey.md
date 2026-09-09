@@ -34,8 +34,17 @@ resource "nps_workshop_apikey" "ci" {
 
 ### Optional
 
-- `lifetime` (Number) The lifetime for this key in hours
+- `lifetime` (Number) The lifetime for this key in hours. Must be between 1 and 8760 (365 days). Omit it to default to 30 days. Changing it re-bases `expires` on the time of the apply.
 
 ### Read-Only
 
+- `expires` (String) When this key expires, as an RFC 3339 timestamp.
 - `secret` (String, Sensitive) The key secret
+
+## Import
+
+The [`terraform import` command](https://developer.hashicorp.com/terraform/cli/commands/import) can be used, for example:
+
+```shell
+terraform import nps_workshop_apikey.ci ci
+```

@@ -28,4 +28,4 @@ resource "nps_workshop_settings_apikey_cidr" "settings" {
 ### Optional
 
 - `allowed_cidrs` (List of String) CIDR ranges allowed to use API keys (e.g. `10.0.0.0/8`). Empty means unrestricted. Maximum 25 entries.
-- `enabled` (Boolean) Whether CIDR restrictions are enforced for API key requests. Kept separate from `allowed_cidrs` so an allowlist can be staged without being active, or enforcement can be paused without losing the configured ranges.
+- `enabled` (Boolean) Whether CIDR restrictions are enforced for API key requests. Defaults to `false`. Kept separate from `allowed_cidrs` so an allowlist can be staged without being active, or enforcement can be paused without losing the configured ranges.

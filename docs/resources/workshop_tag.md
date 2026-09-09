@@ -28,7 +28,7 @@ resource "nps_workshop_tag" "dev" {
 
 ### Required
 
-- `name` (String) The name for this tag. Changing the name forces replacement.
+- `name` (String) The name for this tag. Changing the name renames the tag in place: its group assignments, rules, sync settings and position in the tag ordering are all preserved.
 
 ### Optional
 

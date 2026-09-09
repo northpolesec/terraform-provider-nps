@@ -254,6 +254,13 @@ func (r *NetworkFlowRuleResource) Schema(ctx context.Context, req resource.Schem
 							Optional:            true,
 							Validators: []validator.Int64{
 								int64validator.Between(0, 65535),
+								// 0 is the "match only low" spelling, so it is exempt
+								// from the ordering check; any other value has to be a
+								// real upper bound.
+								int64validator.Any(
+									int64validator.OneOf(0),
+									int64validator.AtLeastSumOf(path.MatchRelative().AtParent().AtName("low")),
+								),
 							},
 						},
 					},
@@ -410,15 +417,13 @@ func (r *NetworkFlowRuleResource) Read(ctx context.Context, req resource.ReadReq
 		data.Protocols, _ = types.ListValueFrom(ctx, types.Int64Type, protocols)
 	}
 	if len(rule.GetPorts()) > 0 {
+		prior := data.Ports
 		data.Ports = make([]NetworkFlowRulePortRangeModel, 0, len(rule.GetPorts()))
-		for _, p := range rule.GetPorts() {
-			port := NetworkFlowRulePortRangeModel{
-				Low: types.Int64Value(int64(p.GetLow())),
-			}
-			if p.GetHigh() != 0 {
-				port.High = types.Int64Value(int64(p.GetHigh()))
-			}
-			data.Ports = append(data.Ports, port)
+		for i, p := range rule.GetPorts() {
+			data.Ports = append(data.Ports, NetworkFlowRulePortRangeModel{
+				Low:  types.Int64Value(int64(p.GetLow())),
+				High: portRangeHigh(prior, i, p.GetHigh()),
+			})
 		}
 	}
 
@@ -481,6 +486,21 @@ func buildNetworkFlowRule(ctx context.Context, data NetworkFlowRuleResourceModel
 	}
 
 	return builder.Build()
+}
+
+// portRangeHigh maps the server's high bound back onto the model. The proto
+// treats 0 and unset identically ("0 (unset) matches only low") and the wire
+// carries no way to tell them apart, so keep whichever of the two spellings is
+// already in state at this index. Forcing null over an explicit high = 0 is a
+// perpetual diff.
+func portRangeHigh(prior []NetworkFlowRulePortRangeModel, i int, high uint32) types.Int64 {
+	if high != 0 {
+		return types.Int64Value(int64(high))
+	}
+	if i < len(prior) && !prior[i].High.IsNull() {
+		return types.Int64Value(0)
+	}
+	return types.Int64Null()
 }
 
 func (r *NetworkFlowRuleResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
@@ -660,14 +680,11 @@ func (r *NetworkFlowRuleResource) List(ctx context.Context, req list.ListRequest
 				}
 				if len(rule.GetPorts()) > 0 {
 					model.Ports = make([]NetworkFlowRulePortRangeModel, 0, len(rule.GetPorts()))
-					for _, p := range rule.GetPorts() {
-						port := NetworkFlowRulePortRangeModel{
-							Low: types.Int64Value(int64(p.GetLow())),
-						}
-						if p.GetHigh() != 0 {
-							port.High = types.Int64Value(int64(p.GetHigh()))
-						}
-						model.Ports = append(model.Ports, port)
+					for i, p := range rule.GetPorts() {
+						model.Ports = append(model.Ports, NetworkFlowRulePortRangeModel{
+							Low:  types.Int64Value(int64(p.GetLow())),
+							High: portRangeHigh(nil, i, p.GetHigh()),
+						})
 					}
 				}
 

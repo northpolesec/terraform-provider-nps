@@ -330,3 +330,26 @@ func TestSyncSettingsClientModeUnknownIsNull(t *testing.T) {
 		t.Errorf("expected nil on_demand_admin_mode block")
 	}
 }
+
+// TestSyncSettingsOnDemandUnspecifiedStateIsNull checks a server-reported
+// UNSPECIFIED state is not written into state. The schema's own OneOf validator
+// rejects it, so writing it made the next plan fail on state the provider wrote.
+func TestSyncSettingsOnDemandUnspecifiedStateIsNull(t *testing.T) {
+	ctx := context.Background()
+
+	model, diags := syncSettingsProtoToModel(ctx, apipb.SyncSettings_builder{
+		Tag:                 "dev",
+		OnDemandMonitorMode: apipb.OnDemandMonitorMode_builder{MaxMinutes: 60}.Build(),
+		OnDemandAdminMode:   apipb.OnDemandAdminMode_builder{MaxMinutes: 30}.Build(),
+	}.Build())
+	if diags.HasError() {
+		t.Fatalf("unexpected diagnostics: %v", diags)
+	}
+
+	if model.OnDemandMonitorMode == nil || !model.OnDemandMonitorMode.State.IsNull() {
+		t.Errorf("monitor mode state: got %v, want null", model.OnDemandMonitorMode)
+	}
+	if model.OnDemandAdminMode == nil || !model.OnDemandAdminMode.State.IsNull() {
+		t.Errorf("admin mode state: got %v, want null", model.OnDemandAdminMode)
+	}
+}

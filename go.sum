@@ -1,11 +1,11 @@
 buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go v1.36.12-20260415201107-50325440f8f2.2 h1:6NSZCbUQcDWZlgiF5XyM9SiNAt20hQvg2JRrBzQZVgU=
 buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go v1.36.12-20260415201107-50325440f8f2.2/go.mod h1:TCt1lluMFnctISJXvkIQ4x3ABrPuUKCWKyjKdkJNBpw=
-buf.build/gen/go/northpolesec/protos/protocolbuffers/go v1.36.12-20260904135605-a0b311108b7c.2 h1:NPe2/U6ZJFfgwYAm/Lz1KnCC5XM2WO+zQwSF27/L7Uw=
-buf.build/gen/go/northpolesec/protos/protocolbuffers/go v1.36.12-20260904135605-a0b311108b7c.2/go.mod h1:zG4BsQXlYqt56Eo/qMDy6CSMr2qSsUIoqaCqPOqPnyI=
-buf.build/gen/go/northpolesec/workshop-api/grpc/go v1.6.2-20260905000856-cb4ff7372e9a.1 h1:JDQUz+SPULNwzMPwxE3TG9GpAT2S8Dhln1j4GOWGXXI=
-buf.build/gen/go/northpolesec/workshop-api/grpc/go v1.6.2-20260905000856-cb4ff7372e9a.1/go.mod h1:huFIWAed3irl+3niQCtEjfVL6Kgv0wGVxKN9xNTzp54=
-buf.build/gen/go/northpolesec/workshop-api/protocolbuffers/go v1.36.12-20260905000856-cb4ff7372e9a.2 h1:46Ttpvonhk90JZslKUQH2B31FIVDImIHF5G23L2WedE=
-buf.build/gen/go/northpolesec/workshop-api/protocolbuffers/go v1.36.12-20260905000856-cb4ff7372e9a.2/go.mod h1:ouqSVqbMJg0kbfbPNaJhX0UBf9aQKO9ne5ROkfjMPxo=
+buf.build/gen/go/northpolesec/protos/protocolbuffers/go v1.36.12-20260909134040-37f1c867d5a2.2 h1:UPGA3phNhGN22jG/xI2++HUFe0a7mKmWqeo3GQvP3OU=
+buf.build/gen/go/northpolesec/protos/protocolbuffers/go v1.36.12-20260909134040-37f1c867d5a2.2/go.mod h1:zG4BsQXlYqt56Eo/qMDy6CSMr2qSsUIoqaCqPOqPnyI=
+buf.build/gen/go/northpolesec/workshop-api/grpc/go v1.6.2-20260908201826-5f832ecab65f.1 h1:83Sl7b+1bDTXy/NJ5Kbk7mCzZUA9qdoZHlEnr3gCw/0=
+buf.build/gen/go/northpolesec/workshop-api/grpc/go v1.6.2-20260908201826-5f832ecab65f.1/go.mod h1:mHA+84ao/M9f3NX/xKMONLhnljks98Y28BnrHppu7aQ=
+buf.build/gen/go/northpolesec/workshop-api/protocolbuffers/go v1.36.12-20260908201826-5f832ecab65f.2 h1:bNfL/pl7CIsevDfA3mzT8V1A75SBpnq1M7dVSCVBDzM=
+buf.build/gen/go/northpolesec/workshop-api/protocolbuffers/go v1.36.12-20260908201826-5f832ecab65f.2/go.mod h1:ouqSVqbMJg0kbfbPNaJhX0UBf9aQKO9ne5ROkfjMPxo=
 dario.cat/mergo v1.0.0 h1:AGCNq9Evsj31mOgNPcLyXc+4PNABt905YmuqPYYpBWk=
 dario.cat/mergo v1.0.0/go.mod h1:uNxQE+84aUszobStD9th8a29P2fMDhsBdgRYvZOxGmk=
 github.com/Microsoft/go-winio v0.6.2 h1:F2VQgta7ecxGYO8k3ZZz3RS8fVIXVxONVUPlNERoyfY=
