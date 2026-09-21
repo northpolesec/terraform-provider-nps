@@ -4,7 +4,7 @@ go 1.26.0
 
 require (
 	buf.build/gen/go/northpolesec/protos/protocolbuffers/go v1.36.12-20260916203939-1934242d44bd.2
-	buf.build/gen/go/northpolesec/workshop-api/grpc/go v1.6.2-20260910185314-dd45fd8f7a96.1
+	buf.build/gen/go/northpolesec/workshop-api/grpc/go v1.6.2-20260916221029-2bbc6b12a9ab.1
 	buf.build/gen/go/northpolesec/workshop-api/protocolbuffers/go v1.36.12-20260910185314-dd45fd8f7a96.2
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/hashicorp/terraform-plugin-framework v1.19.0
