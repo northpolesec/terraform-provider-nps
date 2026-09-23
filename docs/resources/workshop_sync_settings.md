@@ -61,7 +61,7 @@ resource "nps_workshop_sync_settings" "dev_settings" {
 ### Optional
 
 - `allowed_path_regex` (String) Regex matching paths whose executions are allowed. Set to an empty string to explicitly clear any lower-precedence tag's value.
-- `auto_bundle_inventory` (Boolean) Kill switch for automatically requesting bundle inventory from hosts for allow-unknown events. Leaving it unset means enabled, since the global default sets it to `true`.
+- `auto_bundle_inventory` (Boolean) Kill switch for automatically requesting bundle inventory from hosts for allow-unknown events. Leaving it unset inherits the value from a lower-precedence tag, which resolves to the global default of `true` unless another tag sets it to `false`.
 - `batch_size` (Number) Number of events a host uploads per request.
 - `blocked_path_regex` (String) Regex matching paths whose executions are blocked. Set to an empty string to explicitly clear any lower-precedence tag's value.
 - `cel_fallback_rule` (Block List) CEL fallback rules evaluated when no static rule matches. The block may be repeated; the order is preserved. (see [below for nested schema](#nestedblock--cel_fallback_rule))
@@ -143,7 +143,11 @@ Optional:
 
 Required:
 
-- `action` (String) The action composed rules take for the process. The possible values are: `ALLOW`, `AUDIT`, and `DENY`. Required here: composition order is derived from the action, and there is no rule outcome to inherit. The `FILE_ACCESS_PROCESS_ACTION_`-prefixed spellings are accepted aliases.
+- `action` (String) The action composed rules take for the process. The possible values are: `ALLOW`, `AUDIT`, and `DENY`. Required here: composition order is derived from the action, and there is no rule outcome to inherit.
+
+`DENY` does not by itself stop the process reading the files: an unset `allow_read_access` inherits the composed rule's value, so set `allow_read_access` to `false` as well to deny reads.
+
+The `FILE_ACCESS_PROCESS_ACTION_`-prefixed spellings are accepted aliases.
 - `type` (String) Which kind of process matcher this entry applies to. The possible values are: `BINARY_PATH`, `CD_HASH`, `SIGNING_ID`, `CERTIFICATE_SHA256`, and `TEAM_ID`. The `FILE_ACCESS_PROCESS_TYPE_`-prefixed spellings are accepted aliases.
 - `value` (String) The process matcher value.
 

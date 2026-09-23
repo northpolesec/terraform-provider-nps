@@ -484,8 +484,8 @@ func (r *FileAccessRuleResource) Schema(ctx context.Context, req resource.Schema
 							Required:            true,
 						},
 						"action": schema.StringAttribute{
-							Description:         "The action this rule takes for the process. The possible values are: ALLOW, AUDIT, and DENY. Leave unset to inherit the outcome the rule's rule_type implies. The FILE_ACCESS_PROCESS_ACTION_-prefixed spellings are accepted aliases.",
-							MarkdownDescription: "The action this rule takes for the process. The possible values are: `ALLOW`, `AUDIT`, and `DENY`. Leave unset to inherit the outcome the rule's `rule_type` implies. The `FILE_ACCESS_PROCESS_ACTION_`-prefixed spellings are accepted aliases.",
+							Description:         "The action this rule takes for the process. The possible values are: ALLOW, AUDIT, and DENY. Leave unset to inherit the outcome the rule's rule_type implies. DENY does not by itself stop the process reading the files: an unset allow_read_access inherits the rule's value, so set allow_read_access to false as well to deny reads. The FILE_ACCESS_PROCESS_ACTION_-prefixed spellings are accepted aliases.",
+							MarkdownDescription: "The action this rule takes for the process. The possible values are: `ALLOW`, `AUDIT`, and `DENY`. Leave unset to inherit the outcome the rule's `rule_type` implies.\n\n`DENY` does not by itself stop the process reading the files: an unset `allow_read_access` inherits the rule's value, so set `allow_read_access` to `false` as well to deny reads.\n\nThe `FILE_ACCESS_PROCESS_ACTION_`-prefixed spellings are accepted aliases.",
 							Optional:            true,
 							Validators: []validator.String{
 								stringvalidator.OneOf(utils.ProtoEnumAcceptedValues(apipb.FileAccessProcessAction(0).Descriptor(), fileAccessProcessActionPrefix)...),

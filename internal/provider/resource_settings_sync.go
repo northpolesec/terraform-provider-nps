@@ -189,8 +189,8 @@ func (r *SyncSettingsResource) Schema(ctx context.Context, req resource.SchemaRe
 				Optional:            true,
 			},
 			"auto_bundle_inventory": schema.BoolAttribute{
-				Description:         "Kill switch for automatically requesting bundle inventory from hosts for allow-unknown events. Leaving it unset means enabled, since the global default sets it to true.",
-				MarkdownDescription: "Kill switch for automatically requesting bundle inventory from hosts for allow-unknown events. Leaving it unset means enabled, since the global default sets it to `true`.",
+				Description:         "Kill switch for automatically requesting bundle inventory from hosts for allow-unknown events. Leaving it unset inherits the value from a lower-precedence tag, which resolves to the global default of true unless another tag sets it to false.",
+				MarkdownDescription: "Kill switch for automatically requesting bundle inventory from hosts for allow-unknown events. Leaving it unset inherits the value from a lower-precedence tag, which resolves to the global default of `true` unless another tag sets it to `false`.",
 				Optional:            true,
 			},
 			"store_platform_binary_events": schema.BoolAttribute{
@@ -274,8 +274,8 @@ func (r *SyncSettingsResource) Schema(ctx context.Context, req resource.SchemaRe
 							Required:            true,
 						},
 						"action": schema.StringAttribute{
-							Description:         "The action composed rules take for the process. The possible values are: ALLOW, AUDIT, and DENY. Required here: composition order is derived from the action, and there is no rule outcome to inherit. The FILE_ACCESS_PROCESS_ACTION_-prefixed spellings are accepted aliases.",
-							MarkdownDescription: "The action composed rules take for the process. The possible values are: `ALLOW`, `AUDIT`, and `DENY`. Required here: composition order is derived from the action, and there is no rule outcome to inherit. The `FILE_ACCESS_PROCESS_ACTION_`-prefixed spellings are accepted aliases.",
+							Description:         "The action composed rules take for the process. The possible values are: ALLOW, AUDIT, and DENY. Required here: composition order is derived from the action, and there is no rule outcome to inherit. DENY does not by itself stop the process reading the files: an unset allow_read_access inherits the composed rule's value, so set allow_read_access to false as well to deny reads. The FILE_ACCESS_PROCESS_ACTION_-prefixed spellings are accepted aliases.",
+							MarkdownDescription: "The action composed rules take for the process. The possible values are: `ALLOW`, `AUDIT`, and `DENY`. Required here: composition order is derived from the action, and there is no rule outcome to inherit.\n\n`DENY` does not by itself stop the process reading the files: an unset `allow_read_access` inherits the composed rule's value, so set `allow_read_access` to `false` as well to deny reads.\n\nThe `FILE_ACCESS_PROCESS_ACTION_`-prefixed spellings are accepted aliases.",
 							Required:            true,
 							Validators: []validator.String{
 								stringvalidator.OneOf(utils.ProtoEnumAcceptedValues(apipb.FileAccessProcessAction(0).Descriptor(), fileAccessProcessActionPrefix)...),
@@ -477,6 +477,45 @@ func removableMediaPolicyBlockSchema(desc string) schema.SingleNestedBlock {
 
 func (r *SyncSettingsResource) ConfigValidators(ctx context.Context) []resource.ConfigValidator {
 	return []resource.ConfigValidator{
+		utils.ConfigValidatorFunc("Validate process_overrides", func(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
+			var data SyncSettingsResourceModel
+			resp.Diagnostics.Append(req.Config.Get(ctx, &data)...)
+			if resp.Diagnostics.HasError() {
+				return
+			}
+			if data.ProcessOverrides.IsNull() || data.ProcessOverrides.IsUnknown() {
+				return
+			}
+
+			var ms []fileAccessProcessOverrideModel
+			resp.Diagnostics.Append(data.ProcessOverrides.ElementsAs(ctx, &ms, false)...)
+			if resp.Diagnostics.HasError() {
+				return
+			}
+
+			// The server requires (type, value) to be unique, and this resource
+			// deletes the tag's settings before writing the new ones, so a
+			// server-side rejection would leave the tag with nothing. Catch it
+			// at plan time instead. Compare the normalized type so the two
+			// accepted spellings of a matcher collide.
+			seen := make(map[[2]string]int, len(ms))
+			for i, m := range ms {
+				if m.Type.IsUnknown() || m.Value.IsUnknown() {
+					continue
+				}
+				key := [2]string{utils.NormalizeEnum(m.Type.ValueString(), fileAccessProcessTypePrefix), m.Value.ValueString()}
+				if first, dup := seen[key]; dup {
+					resp.Diagnostics.AddAttributeError(
+						path.Root("process_overrides").AtListIndex(i),
+						"Duplicate process override",
+						fmt.Sprintf("process_overrides must be unique on (type, value); entry %d already matches %s %q.",
+							first, m.Type.ValueString(), m.Value.ValueString()),
+					)
+					continue
+				}
+				seen[key] = i
+			}
+		}),
 		utils.ConfigValidatorFunc("Validate removable-media policy blocks", func(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
 			var data SyncSettingsResourceModel
 			resp.Diagnostics.Append(req.Config.Get(ctx, &data)...)

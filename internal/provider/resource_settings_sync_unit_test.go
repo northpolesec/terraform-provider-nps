@@ -12,6 +12,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"google.golang.org/protobuf/proto"
 
@@ -506,5 +507,73 @@ func TestSyncSettingsCelFallbackButtonLabelLength(t *testing.T) {
 	}
 	if diags := validate(strings.Repeat("a", celFallbackButtonLabelMaxLen+1)); !diags.HasError() {
 		t.Errorf("a %d-character label should be rejected", celFallbackButtonLabelMaxLen+1)
+	}
+}
+
+// TestSyncSettingsProcessOverridesRejectsDuplicates checks a duplicate
+// (type, value) pair fails at plan time. The server requires the pair to be
+// unique and this resource deletes the tag's settings before writing the new
+// ones, so a server-side rejection would leave the tag with nothing.
+func TestSyncSettingsProcessOverridesRejectsDuplicates(t *testing.T) {
+	ctx := context.Background()
+	r := &SyncSettingsResource{}
+
+	var sResp resource.SchemaResponse
+	r.Schema(ctx, resource.SchemaRequest{}, &sResp)
+
+	validate := func(overrides []fileAccessProcessOverrideModel) diag.Diagnostics {
+		list, d := types.ListValueFrom(ctx, fileAccessProcessOverrideObjectType, overrides)
+		if d.HasError() {
+			t.Fatalf("building list: %v", d)
+		}
+		// tfsdk.Config has no Set, so round-trip the model through a State to
+		// get the raw value the validators read.
+		st := tfsdk.State{Schema: sResp.Schema}
+		if diags := st.Set(ctx, SyncSettingsResourceModel{
+			Tag:                        types.StringValue("dev"),
+			ProcessOverrides:           list,
+			TelemetryFilterExpressions: types.ListNull(types.StringType),
+		}); diags.HasError() {
+			t.Fatalf("building config: %v", diags)
+		}
+		cfg := tfsdk.Config{Schema: sResp.Schema, Raw: st.Raw}
+
+		var all diag.Diagnostics
+		for _, cv := range r.ConfigValidators(ctx) {
+			vResp := &resource.ValidateConfigResponse{}
+			cv.ValidateResource(ctx, resource.ValidateConfigRequest{Config: cfg}, vResp)
+			all.Append(vResp.Diagnostics...)
+		}
+		return all
+	}
+
+	entry := func(typ, value, action string) fileAccessProcessOverrideModel {
+		return fileAccessProcessOverrideModel{
+			Type:   types.StringValue(typ),
+			Value:  types.StringValue(value),
+			Action: types.StringValue(action),
+		}
+	}
+
+	if diags := validate([]fileAccessProcessOverrideModel{
+		entry("TEAM_ID", "EQHXZ8M8AV", "DENY"),
+		entry("SIGNING_ID", "EQHXZ8M8AV", "ALLOW"),
+	}); diags.HasError() {
+		t.Errorf("distinct matchers should be accepted: %v", diags)
+	}
+
+	if diags := validate([]fileAccessProcessOverrideModel{
+		entry("TEAM_ID", "EQHXZ8M8AV", "DENY"),
+		entry("TEAM_ID", "EQHXZ8M8AV", "ALLOW"),
+	}); !diags.HasError() {
+		t.Error("a duplicate (type, value) should be rejected")
+	}
+
+	// The two accepted spellings of a matcher type are the same matcher.
+	if diags := validate([]fileAccessProcessOverrideModel{
+		entry("TEAM_ID", "EQHXZ8M8AV", "DENY"),
+		entry("FILE_ACCESS_PROCESS_TYPE_TEAM_ID", "EQHXZ8M8AV", "ALLOW"),
+	}); !diags.HasError() {
+		t.Error("a duplicate spelled with the prefixed alias should be rejected")
 	}
 }

@@ -51,6 +51,6 @@ resource "nps_workshop_signal" "ChromeCookieAccess" {
 
 - `description` (String) A human-readable description of what this signal detects.
 - `disabled` (Boolean) When true the signal is suppressed for hosts where this definition wins precedence (a higher-priority tag can disable a signal a lower tag enables).
-- `full_process_tree` (Boolean) When true a match reports the whole process tree around the matched process (siblings included) instead of just its ancestry.
+- `full_process_tree` (Boolean) When true a match reports the whole process tree around the matched process (siblings included) instead of just its ancestry. Defaults to `false` on a new signal; omitting it on an existing one keeps whatever the signal already has.
 - `labels` (Set of String) Free-form labels attached to the signal and copied onto each report it produces. Each label must be non-whitespace and at most 64 characters.
-- `os_type` (String) The operating system this signal applies to. The possible values are: `MACOS`, `LINUX`, and `WINDOWS`. Defaults to `MACOS`. Hosts running a different OS are sent a removal for the signal instead of the definition. The `OS_TYPE_`-prefixed spellings are accepted aliases.
+- `os_type` (String) The operating system this signal applies to. The possible values are: `MACOS`, `LINUX`, and `WINDOWS`. A new signal defaults to `MACOS`; omitting it on an existing signal keeps whatever platform the signal already targets. Hosts running a different OS are sent a removal for the signal instead of the definition. The `OS_TYPE_`-prefixed spellings are accepted aliases.
