@@ -554,3 +554,29 @@ func TestAutoUpdateDaysOfWeekSizeValidator(t *testing.T) {
 		t.Error("a day outside 0-6 should be rejected")
 	}
 }
+
+// TestAutoUpdateImportStateWritesState is the regression test for an
+// ImportState that left days_of_week a zero-value set. A types.Set with no
+// element type cannot be written to state, so the import failed before Read
+// ever ran.
+func TestAutoUpdateImportStateWritesState(t *testing.T) {
+	ctx := context.Background()
+	r := &AutoUpdateSettingsResource{}
+
+	var sResp resource.SchemaResponse
+	r.Schema(ctx, resource.SchemaRequest{}, &sResp)
+
+	resp := &resource.ImportStateResponse{State: emptyState(ctx, sResp.Schema)}
+	r.ImportState(ctx, resource.ImportStateRequest{ID: "auto_update_settings"}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("import should write placeholder state: %v", resp.Diagnostics)
+	}
+
+	var got AutoUpdateSettingsResourceModel
+	if diags := resp.State.Get(ctx, &got); diags.HasError() {
+		t.Fatalf("reading imported state: %v", diags)
+	}
+	if !got.DaysOfWeek.IsNull() {
+		t.Errorf("days_of_week: got %v, want a null set", got.DaysOfWeek)
+	}
+}

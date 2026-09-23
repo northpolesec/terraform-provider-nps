@@ -217,9 +217,12 @@ func (r *AutoUpdateSettingsResource) Delete(ctx context.Context, req resource.De
 func (r *AutoUpdateSettingsResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	// Placeholder state; Read is invoked immediately after import and
 	// overwrites this with the authoritative server values. The placeholder
-	// must satisfy the schema's OneOf validator on Mode.
+	// must satisfy the schema's OneOf validator on Mode, and every collection
+	// needs its element type: a zero-value types.Set cannot be written to state,
+	// which would fail the import before Read ever runs.
 	resp.Diagnostics.Append(resp.State.Set(ctx, &AutoUpdateSettingsResourceModel{
-		Mode: types.StringValue("AUTO_UPDATE_MODE_DISABLED"),
+		Mode:       types.StringValue("AUTO_UPDATE_MODE_DISABLED"),
+		DaysOfWeek: types.SetNull(types.Int64Type),
 	})...)
 }
 

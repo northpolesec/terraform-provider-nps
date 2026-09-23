@@ -9,7 +9,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/defaults"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"google.golang.org/grpc"
@@ -236,7 +235,7 @@ func TestUpsertSignalPropagatesFields(t *testing.T) {
 		Labels:      types.SetValueMust(types.StringType, []attr.Value{types.StringValue("cred"), types.StringValue("theft")}),
 	}
 
-	if err := r.upsert(context.Background(), plan); err != nil {
+	if _, err := r.upsert(context.Background(), plan); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -284,30 +283,83 @@ func TestOSTypeToModel(t *testing.T) {
 	}
 }
 
-// TestSignalOSTypeDefaultsToMacOS pins the default down: an unset os_type is
-// stored as macOS server-side, so leaving the attribute a bare Optional would
-// refresh MACOS into state and diff against the config's null forever.
-func TestSignalOSTypeDefaultsToMacOS(t *testing.T) {
+// TestSignalComputedAttributesPreserveServerValues checks os_type and
+// full_process_tree carry no static default. A default would plan MACOS/false
+// for an existing signal whose configuration says nothing about them, quietly
+// retargeting a LINUX signal or turning off full-tree reporting on the first
+// apply after upgrading the provider. UseStateForUnknown keeps the refreshed
+// value instead; a new signal still lands on the server's defaults.
+func TestSignalComputedAttributesPreserveServerValues(t *testing.T) {
 	ctx := context.Background()
 	var sResp resource.SchemaResponse
 	(&SignalResource{}).Schema(ctx, resource.SchemaRequest{}, &sResp)
 
-	attribute, ok := sResp.Schema.Attributes["os_type"].(schema.StringAttribute)
+	osType, ok := sResp.Schema.Attributes["os_type"].(schema.StringAttribute)
 	if !ok {
 		t.Fatal("os_type is not a StringAttribute")
 	}
-	if !attribute.Computed {
-		t.Error("os_type must be Computed for its default to apply")
+	if osType.Default != nil {
+		t.Error("os_type must not carry a static default; it would retarget an existing signal")
 	}
-	if attribute.Default == nil {
-		t.Fatal("os_type has no default")
+	if !osType.Computed {
+		t.Error("os_type must be Computed so an omitted value can track the server")
 	}
 
-	dResp := &defaults.StringResponse{}
-	attribute.Default.DefaultString(ctx, defaults.StringRequest{}, dResp)
-	if dResp.PlanValue.ValueString() != "MACOS" {
-		t.Errorf("os_type default: got %q, want MACOS", dResp.PlanValue.ValueString())
+	tree, ok := sResp.Schema.Attributes["full_process_tree"].(schema.BoolAttribute)
+	if !ok {
+		t.Fatal("full_process_tree is not a BoolAttribute")
 	}
+	if tree.Default != nil {
+		t.Error("full_process_tree must not carry a static default")
+	}
+	if !tree.Computed {
+		t.Error("full_process_tree must be Computed")
+	}
+}
+
+// TestResolveSignalComputed checks an apply never leaves an unknown in state,
+// and that a value the configuration did set is untouched.
+func TestResolveSignalComputed(t *testing.T) {
+	stored := apipb.Signal_builder{
+		OsType:          apipb.OSType_OS_TYPE_LINUX,
+		FullProcessTree: true,
+	}.Build()
+
+	// Unset in configuration: both resolve from what the server stored.
+	data := SignalResourceModel{OsType: types.StringUnknown(), FullProcessTree: types.BoolUnknown()}
+	resolveSignalComputed(&data, stored)
+	if data.OsType.ValueString() != "LINUX" {
+		t.Errorf("os_type: got %v, want LINUX", data.OsType)
+	}
+	if !data.FullProcessTree.ValueBool() {
+		t.Errorf("full_process_tree: got %v, want true", data.FullProcessTree)
+	}
+
+	// An unset os_type is stored as macOS, so a new signal lands there.
+	fresh := SignalModelUnknown()
+	resolveSignalComputed(&fresh, apipb.Signal_builder{}.Build())
+	if fresh.OsType.ValueString() != "MACOS" {
+		t.Errorf("os_type: got %v, want MACOS", fresh.OsType)
+	}
+	if fresh.FullProcessTree.ValueBool() {
+		t.Errorf("full_process_tree: got %v, want false", fresh.FullProcessTree)
+	}
+
+	// A configured value is left alone.
+	configured := SignalResourceModel{OsType: types.StringValue("OS_TYPE_WINDOWS"), FullProcessTree: types.BoolValue(false)}
+	resolveSignalComputed(&configured, stored)
+	if configured.OsType.ValueString() != "OS_TYPE_WINDOWS" {
+		t.Errorf("os_type: got %v, want the configured OS_TYPE_WINDOWS", configured.OsType)
+	}
+	if configured.FullProcessTree.ValueBool() {
+		t.Errorf("full_process_tree: got %v, want the configured false", configured.FullProcessTree)
+	}
+}
+
+// SignalModelUnknown is a model with both computed attributes unresolved, as
+// the framework hands them to Create when the configuration omits them.
+func SignalModelUnknown() SignalResourceModel {
+	return SignalResourceModel{OsType: types.StringUnknown(), FullProcessTree: types.BoolUnknown()}
 }
 
 // TestUpsertSignalPropagatesOSTypeAndProcessTree checks the two fields the
@@ -333,7 +385,7 @@ func TestUpsertSignalPropagatesOSTypeAndProcessTree(t *testing.T) {
 			plan.OsType = c.osType
 			plan.FullProcessTree = types.BoolValue(true)
 
-			if err := r.upsert(context.Background(), plan); err != nil {
+			if _, err := r.upsert(context.Background(), plan); err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
 

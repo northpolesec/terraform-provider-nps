@@ -95,7 +95,11 @@ Required:
 
 Optional:
 
-- `action` (String) The action this rule takes for the process. The possible values are: `ALLOW`, `AUDIT`, and `DENY`. Leave unset to inherit the outcome the rule's `rule_type` implies. The `FILE_ACCESS_PROCESS_ACTION_`-prefixed spellings are accepted aliases.
+- `action` (String) The action this rule takes for the process. The possible values are: `ALLOW`, `AUDIT`, and `DENY`. Leave unset to inherit the outcome the rule's `rule_type` implies.
+
+`DENY` does not by itself stop the process reading the files: an unset `allow_read_access` inherits the rule's value, so set `allow_read_access` to `false` as well to deny reads.
+
+The `FILE_ACCESS_PROCESS_ACTION_`-prefixed spellings are accepted aliases.
 - `allow_read_access` (Boolean) Overrides the rule's `allow_read_access` for this process. Unset inherits it.
 - `block_message` (String) Overrides the rule's `block_message` for this process. Unset inherits it.
 - `enable_silent_mode` (Boolean) Overrides the rule's `enable_silent_mode` for this process. Unset inherits it.
