@@ -281,6 +281,26 @@ func (r *RiskEngineSettingsResource) Configure(ctx context.Context, req resource
 	r.client = pd.Client
 }
 
+// fetchRiskEngineSettings reads the current server-side settings so
+// authoritative values can be written to Terraform state after a Create or
+// Update. Required because uuid is Optional+Computed on both blockable_rules
+// rules and remote_plugins: the plan carries an unknown for every entry the
+// user did not pin, and the proto requires that the server-assigned UUID be
+// echoed back on later writes to keep rule identity stable.
+func (r *RiskEngineSettingsResource) fetchRiskEngineSettings(ctx context.Context, diags *diag.Diagnostics) (RiskEngineSettingsResourceModel, bool) {
+	ret, err := r.client.GetRiskEngineSettings(ctx, apipb.GetRiskEngineSettingsRequest_builder{}.Build())
+	if err != nil {
+		diags.AddError("Client Error", fmt.Sprintf("Failed to get risk engine settings: %v", err))
+		return RiskEngineSettingsResourceModel{}, false
+	}
+	data, d := riskEngineProtoToModel(ctx, ret.GetRiskEngineSettings())
+	diags.Append(d...)
+	if diags.HasError() {
+		return RiskEngineSettingsResourceModel{}, false
+	}
+	return data, true
+}
+
 func (r *RiskEngineSettingsResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var data RiskEngineSettingsResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
@@ -299,22 +319,20 @@ func (r *RiskEngineSettingsResource) Create(ctx context.Context, req resource.Cr
 		return
 	}
 
-	tflog.Info(ctx, "Created risk engine settings resource")
-
-	resp.Diagnostics.Append(resp.Identity.Set(ctx, RiskEngineSettingsIdentityModel{Id: types.StringValue("risk_engine_settings")})...)
-	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
-}
-
-func (r *RiskEngineSettingsResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
-	ret, err := r.client.GetRiskEngineSettings(ctx, apipb.GetRiskEngineSettingsRequest_builder{}.Build())
-	if err != nil {
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Failed to get risk engine settings: %v", err))
+	final, ok := r.fetchRiskEngineSettings(ctx, &resp.Diagnostics)
+	if !ok {
 		return
 	}
 
-	data, d := riskEngineProtoToModel(ctx, ret.GetRiskEngineSettings())
-	resp.Diagnostics.Append(d...)
-	if resp.Diagnostics.HasError() {
+	tflog.Info(ctx, "Created risk engine settings resource")
+
+	resp.Diagnostics.Append(resp.Identity.Set(ctx, RiskEngineSettingsIdentityModel{Id: types.StringValue("risk_engine_settings")})...)
+	resp.Diagnostics.Append(resp.State.Set(ctx, &final)...)
+}
+
+func (r *RiskEngineSettingsResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
+	data, ok := r.fetchRiskEngineSettings(ctx, &resp.Diagnostics)
+	if !ok {
 		return
 	}
 
@@ -342,10 +360,17 @@ func (r *RiskEngineSettingsResource) Update(ctx context.Context, req resource.Up
 		return
 	}
 
+	// Refresh from the server so state carries the server-assigned UUIDs rather
+	// than the plan's unknowns.
+	final, ok := r.fetchRiskEngineSettings(ctx, &resp.Diagnostics)
+	if !ok {
+		return
+	}
+
 	tflog.Info(ctx, "Updated risk engine settings")
 
 	resp.Diagnostics.Append(resp.Identity.Set(ctx, RiskEngineSettingsIdentityModel{Id: types.StringValue("risk_engine_settings")})...)
-	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+	resp.Diagnostics.Append(resp.State.Set(ctx, &final)...)
 }
 
 func (r *RiskEngineSettingsResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {

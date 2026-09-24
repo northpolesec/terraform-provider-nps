@@ -8,8 +8,13 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"google.golang.org/grpc"
 
+	svcpb "buf.build/gen/go/northpolesec/workshop-api/grpc/go/workshop/v1/workshopv1grpc"
 	apipb "buf.build/gen/go/northpolesec/workshop-api/protocolbuffers/go/workshop/v1"
 )
 
@@ -203,5 +208,106 @@ func TestGroupsProtoToModel_WithGroups(t *testing.T) {
 	}
 	if len(groups[1].GetTags()) != 1 || groups[1].GetTags()[0] != "tag-c" {
 		t.Errorf("unexpected tags after roundtrip: %v", groups[1].GetTags())
+	}
+}
+
+type fakeDirectorySettingsClient struct {
+	svcpb.WorkshopServiceClient
+
+	dirType apipb.DirectoryType
+}
+
+func (f *fakeDirectorySettingsClient) GetDirectorySettings(ctx context.Context, in *apipb.GetDirectorySettingsRequest, _ ...grpc.CallOption) (*apipb.GetDirectorySettingsResponse, error) {
+	return apipb.GetDirectorySettingsResponse_builder{Type: f.dirType.Enum()}.Build(), nil
+}
+
+// callDirectorySettingsRead drives Read with the prior state the framework
+// would normally pre-populate.
+func callDirectorySettingsRead(t *testing.T, r *DirectorySettingsResource, prior DirectorySettingsResourceModel) DirectorySettingsResourceModel {
+	t.Helper()
+	ctx := context.Background()
+
+	var sResp resource.SchemaResponse
+	r.Schema(ctx, resource.SchemaRequest{}, &sResp)
+	var iResp resource.IdentitySchemaResponse
+	r.IdentitySchema(ctx, resource.IdentitySchemaRequest{}, &iResp)
+
+	req := resource.ReadRequest{State: tfsdk.State{Schema: sResp.Schema}}
+	if diags := req.State.Set(ctx, prior); diags.HasError() {
+		t.Fatalf("failed to build state: %v", diags)
+	}
+	resp := &resource.ReadResponse{
+		State:    tfsdk.State{Schema: sResp.Schema},
+		Identity: &tfsdk.ResourceIdentity{Schema: iResp.IdentitySchema},
+	}
+	r.Read(ctx, req, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected error diags: %v", resp.Diagnostics)
+	}
+
+	var got DirectorySettingsResourceModel
+	if diags := resp.State.Get(ctx, &got); diags.HasError() {
+		t.Fatalf("reading final state: %v", diags)
+	}
+	return got
+}
+
+// TestDirectorySettingsReadKeepsPriorOnUnspecified is the regression test for a
+// Read that wrote DIRECTORY_TYPE_UNSPECIFIED into state for a tenant with no
+// stored directory type. The schema's own OneOf validator rejects that value,
+// so the next plan failed on state the provider itself had written.
+func TestDirectorySettingsReadKeepsPriorOnUnspecified(t *testing.T) {
+	prior := DirectorySettingsResourceModel{
+		DirectoryType:            types.StringValue("DIRECTORY_TYPE_LOCAL"),
+		DirectorySyncGroupFilter: types.ListValueMust(groupFilterObjectType, []attr.Value{}),
+	}
+
+	r := &DirectorySettingsResource{client: &fakeDirectorySettingsClient{
+		dirType: apipb.DirectoryType_DIRECTORY_TYPE_UNSPECIFIED,
+	}}
+	if got := callDirectorySettingsRead(t, r, prior); got.DirectoryType.ValueString() != "DIRECTORY_TYPE_LOCAL" {
+		t.Errorf("directory_type: got %q, want the prior value", got.DirectoryType.ValueString())
+	}
+
+	// A concrete value from the server still wins.
+	r = &DirectorySettingsResource{client: &fakeDirectorySettingsClient{
+		dirType: apipb.DirectoryType_DIRECTORY_TYPE_DSYNC,
+	}}
+	if got := callDirectorySettingsRead(t, r, prior); got.DirectoryType.ValueString() != "DIRECTORY_TYPE_DSYNC" {
+		t.Errorf("directory_type: got %q, want DIRECTORY_TYPE_DSYNC", got.DirectoryType.ValueString())
+	}
+}
+
+// TestDirectorySettingsImportPlaceholderIsValid checks the placeholder written
+// on import satisfies the schema's own validator, since Read leaves it in place
+// for a tenant whose directory type is unset.
+func TestDirectorySettingsImportPlaceholderIsValid(t *testing.T) {
+	ctx := context.Background()
+	r := &DirectorySettingsResource{}
+
+	var sResp resource.SchemaResponse
+	r.Schema(ctx, resource.SchemaRequest{}, &sResp)
+
+	resp := &resource.ImportStateResponse{State: emptyState(ctx, sResp.Schema)}
+	r.ImportState(ctx, resource.ImportStateRequest{ID: "directory_settings"}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected error diags: %v", resp.Diagnostics)
+	}
+
+	var got DirectorySettingsResourceModel
+	if diags := resp.State.Get(ctx, &got); diags.HasError() {
+		t.Fatalf("reading state: %v", diags)
+	}
+
+	attribute, ok := sResp.Schema.Attributes["directory_type"].(schema.StringAttribute)
+	if !ok {
+		t.Fatal("directory_type is not a StringAttribute")
+	}
+	for _, v := range attribute.Validators {
+		vResp := &validator.StringResponse{}
+		v.ValidateString(ctx, validator.StringRequest{ConfigValue: got.DirectoryType}, vResp)
+		if vResp.Diagnostics.HasError() {
+			t.Errorf("import placeholder %q fails the schema validator: %v", got.DirectoryType.ValueString(), vResp.Diagnostics)
+		}
 	}
 }

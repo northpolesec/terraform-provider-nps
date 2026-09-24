@@ -6,11 +6,17 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/defaults"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/durationpb"
 
+	svcpb "buf.build/gen/go/northpolesec/workshop-api/grpc/go/workshop/v1/workshopv1grpc"
 	apipb "buf.build/gen/go/northpolesec/workshop-api/protocolbuffers/go/workshop/v1"
 )
 
@@ -236,5 +242,180 @@ func TestCIDRValidator(t *testing.T) {
 		if got := resp.Diagnostics.HasError(); got != tc.wantErr {
 			t.Errorf("%q: got error=%v, want error=%v", tc.val, got, tc.wantErr)
 		}
+	}
+}
+
+type fakeAutoUpdateClient struct {
+	svcpb.WorkshopServiceClient
+
+	settings *apipb.AutoUpdateSettings
+}
+
+func (f *fakeAutoUpdateClient) GetAutoUpdateSettings(ctx context.Context, in *apipb.GetAutoUpdateSettingsRequest, _ ...grpc.CallOption) (*apipb.GetAutoUpdateSettingsResponse, error) {
+	return apipb.GetAutoUpdateSettingsResponse_builder{Settings: f.settings}.Build(), nil
+}
+
+// TestAutoUpdateReadKeepsPriorModeOnUnspecified is the regression test for a
+// Read that wrote AUTO_UPDATE_MODE_UNSPECIFIED into state for a tenant with no
+// stored settings. The schema's own OneOf validator rejects that value, so the
+// next plan failed on state the provider itself had written.
+func TestAutoUpdateReadKeepsPriorModeOnUnspecified(t *testing.T) {
+	ctx := context.Background()
+	prior := AutoUpdateSettingsResourceModel{
+		Mode: types.StringValue("AUTO_UPDATE_MODE_ENABLED_ALL"),
+	}
+
+	read := func(settings *apipb.AutoUpdateSettings) AutoUpdateSettingsResourceModel {
+		r := &AutoUpdateSettingsResource{client: &fakeAutoUpdateClient{settings: settings}}
+
+		var sResp resource.SchemaResponse
+		r.Schema(ctx, resource.SchemaRequest{}, &sResp)
+		var iResp resource.IdentitySchemaResponse
+		r.IdentitySchema(ctx, resource.IdentitySchemaRequest{}, &iResp)
+
+		req := resource.ReadRequest{State: tfsdk.State{Schema: sResp.Schema}}
+		if diags := req.State.Set(ctx, prior); diags.HasError() {
+			t.Fatalf("failed to build state: %v", diags)
+		}
+		resp := &resource.ReadResponse{
+			State:    tfsdk.State{Schema: sResp.Schema},
+			Identity: &tfsdk.ResourceIdentity{Schema: iResp.IdentitySchema},
+		}
+		r.Read(ctx, req, resp)
+		if resp.Diagnostics.HasError() {
+			t.Fatalf("unexpected error diags: %v", resp.Diagnostics)
+		}
+
+		var got AutoUpdateSettingsResourceModel
+		if diags := resp.State.Get(ctx, &got); diags.HasError() {
+			t.Fatalf("reading final state: %v", diags)
+		}
+		return got
+	}
+
+	got := read(apipb.AutoUpdateSettings_builder{
+		Mode: apipb.AutoUpdateMode_AUTO_UPDATE_MODE_UNSPECIFIED,
+	}.Build())
+	if got.Mode.ValueString() != "AUTO_UPDATE_MODE_ENABLED_ALL" {
+		t.Errorf("mode: got %q, want the prior value", got.Mode.ValueString())
+	}
+
+	// A concrete mode from the server still wins.
+	got = read(apipb.AutoUpdateSettings_builder{
+		Mode: apipb.AutoUpdateMode_AUTO_UPDATE_MODE_DISABLED,
+	}.Build())
+	if got.Mode.ValueString() != "AUTO_UPDATE_MODE_DISABLED" {
+		t.Errorf("mode: got %q, want AUTO_UPDATE_MODE_DISABLED", got.Mode.ValueString())
+	}
+}
+
+// TestAPIKeyCIDREnabledHasFalseDefault is the regression test for a bare
+// Optional enabled. SetAPIKeyCIDRSettings replaces the whole message, so
+// omitting the attribute really does store false and Read reports that back;
+// without the default, every refresh diffed false against null forever.
+func TestAPIKeyCIDREnabledHasFalseDefault(t *testing.T) {
+	ctx := context.Background()
+	var sResp resource.SchemaResponse
+	(&APIKeyCIDRSettingsResource{}).Schema(ctx, resource.SchemaRequest{}, &sResp)
+
+	attribute, ok := sResp.Schema.Attributes["enabled"].(schema.BoolAttribute)
+	if !ok {
+		t.Fatal("enabled is not a BoolAttribute")
+	}
+	if !attribute.Computed {
+		t.Error("enabled must be Computed for its default to apply")
+	}
+	if attribute.Default == nil {
+		t.Fatal("enabled has no default")
+	}
+
+	dResp := &defaults.BoolResponse{}
+	attribute.Default.DefaultBool(ctx, defaults.BoolRequest{}, dResp)
+	if dResp.PlanValue.ValueBool() {
+		t.Errorf("enabled default: got %v, want false", dResp.PlanValue)
+	}
+}
+
+type fakeMPAClient struct {
+	svcpb.WorkshopServiceClient
+
+	stored   *apipb.MultipartyApprovalSettings
+	setCalls int
+	lastSet  *apipb.SetMultipartyApprovalSettingsRequest
+}
+
+func (f *fakeMPAClient) GetMultipartyApprovalSettings(ctx context.Context, in *apipb.GetMultipartyApprovalSettingsRequest, _ ...grpc.CallOption) (*apipb.GetMultipartyApprovalSettingsResponse, error) {
+	return apipb.GetMultipartyApprovalSettingsResponse_builder{Settings: f.stored}.Build(), nil
+}
+
+func (f *fakeMPAClient) SetMultipartyApprovalSettings(ctx context.Context, in *apipb.SetMultipartyApprovalSettingsRequest, _ ...grpc.CallOption) (*apipb.SetMultipartyApprovalSettingsResponse, error) {
+	f.setCalls++
+	f.lastSet = in
+	return apipb.SetMultipartyApprovalSettingsResponse_builder{}.Build(), nil
+}
+
+// TestMPAUpdateRefreshesFromServer is the regression test for the perpetual
+// diff: the attributes are Optional+Computed and the Set RPC is
+// presence-sensitive, so an attribute the user leaves out of config must end up
+// in state as the server's value, not the plan's null.
+func TestMPAUpdateRefreshesFromServer(t *testing.T) {
+	ctx := context.Background()
+
+	fake := &fakeMPAClient{stored: apipb.MultipartyApprovalSettings_builder{
+		Enabled:           true,
+		RequiredApprovers: 2,
+		ExcludeApiKeys:    true,
+	}.Build()}
+	r := &MPASettingsResource{client: fake}
+
+	var sResp resource.SchemaResponse
+	r.Schema(ctx, resource.SchemaRequest{}, &sResp)
+	var iResp resource.IdentitySchemaResponse
+	r.IdentitySchema(ctx, resource.IdentitySchemaRequest{}, &iResp)
+
+	// The user configures enabled only; the other two are unset in the plan.
+	plan := MPASettingsResourceModel{Enabled: types.BoolValue(true)}
+	state := MPASettingsResourceModel{
+		Enabled:           types.BoolValue(false),
+		RequiredApprovers: types.Int64Value(2),
+		ExcludeApiKeys:    types.BoolValue(true),
+	}
+
+	req := resource.UpdateRequest{
+		Plan:  tfsdk.Plan{Schema: sResp.Schema},
+		State: tfsdk.State{Schema: sResp.Schema},
+	}
+	if diags := req.Plan.Set(ctx, plan); diags.HasError() {
+		t.Fatalf("failed to build plan: %v", diags)
+	}
+	if diags := req.State.Set(ctx, state); diags.HasError() {
+		t.Fatalf("failed to build state: %v", diags)
+	}
+	resp := &resource.UpdateResponse{
+		State:    tfsdk.State{Schema: sResp.Schema},
+		Identity: &tfsdk.ResourceIdentity{Schema: iResp.IdentitySchema},
+	}
+	r.Update(ctx, req, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected error diags: %v", resp.Diagnostics)
+	}
+
+	// Only the changed field is sent.
+	if fake.setCalls != 1 {
+		t.Fatalf("Set calls = %d, want 1", fake.setCalls)
+	}
+	if fake.lastSet.HasRequiredApprovers() {
+		t.Error("an unconfigured required_approvers must not be sent")
+	}
+
+	var final MPASettingsResourceModel
+	if diags := resp.State.Get(ctx, &final); diags.HasError() {
+		t.Fatalf("reading final state: %v", diags)
+	}
+	if final.RequiredApprovers.ValueInt64() != 2 {
+		t.Errorf("required_approvers: got %v, want the server's 2", final.RequiredApprovers)
+	}
+	if !final.ExcludeApiKeys.ValueBool() {
+		t.Errorf("exclude_api_keys: got %v, want the server's true", final.ExcludeApiKeys)
 	}
 }

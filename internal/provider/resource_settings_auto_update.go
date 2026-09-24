@@ -125,19 +125,26 @@ func (r *AutoUpdateSettingsResource) Create(ctx context.Context, req resource.Cr
 }
 
 func (r *AutoUpdateSettingsResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
+	var data AutoUpdateSettingsResourceModel
+	resp.Diagnostics.Append(req.State.Get(ctx, &data)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
 	ret, err := r.client.GetAutoUpdateSettings(ctx, apipb.GetAutoUpdateSettingsRequest_builder{}.Build())
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Failed to get auto-update settings: %v", err))
 		return
 	}
 
-	data := AutoUpdateSettingsResourceModel{
-		Mode:      types.StringValue(apipb.AutoUpdateMode_AUTO_UPDATE_MODE_UNSPECIFIED.String()),
-		StartHour: types.Int64Null(),
-		EndHour:   types.Int64Null(),
-	}
 	if s := ret.GetSettings(); s != nil {
-		data.Mode = types.StringValue(s.GetMode().String())
+		// A tenant with no stored settings reports AUTO_UPDATE_MODE_UNSPECIFIED,
+		// which is not valid configuration: writing it would leave state that the
+		// schema's own OneOf validator rejects on the next plan. Keep the prior
+		// value instead.
+		if s.GetMode() != apipb.AutoUpdateMode_AUTO_UPDATE_MODE_UNSPECIFIED {
+			data.Mode = types.StringValue(s.GetMode().String())
+		}
 		data.StartHour = int32PtrToTFInt64(s.StartHour)
 		data.EndHour = int32PtrToTFInt64(s.EndHour)
 	}
