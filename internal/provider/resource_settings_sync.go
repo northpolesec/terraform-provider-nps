@@ -487,29 +487,38 @@ func (r *SyncSettingsResource) ConfigValidators(ctx context.Context) []resource.
 				return
 			}
 
-			var ms []fileAccessProcessOverrideModel
-			resp.Diagnostics.Append(data.ProcessOverrides.ElementsAs(ctx, &ms, false)...)
-			if resp.Diagnostics.HasError() {
-				return
-			}
-
 			// The server requires (type, value) to be unique, and this resource
 			// deletes the tag's settings before writing the new ones, so a
 			// server-side rejection would leave the tag with nothing. Catch it
 			// at plan time instead. Compare the normalized type so the two
 			// accepted spellings of a matcher collide.
-			seen := make(map[[2]string]int, len(ms))
-			for i, m := range ms {
-				if m.Type.IsUnknown() || m.Value.IsUnknown() {
+			//
+			// Read the matchers off each element rather than converting the
+			// whole list to structs: an element can be an unknown object while
+			// the list itself is known, e.g. when it comes from a resource that
+			// has not been created yet, and converting that would fail the plan
+			// for a configuration that is perfectly valid.
+			elements := data.ProcessOverrides.Elements()
+			seen := make(map[[2]string]int, len(elements))
+			for i, elem := range elements {
+				obj, ok := elem.(types.Object)
+				if !ok || obj.IsNull() || obj.IsUnknown() {
 					continue
 				}
-				key := [2]string{utils.NormalizeEnum(m.Type.ValueString(), fileAccessProcessTypePrefix), m.Value.ValueString()}
+				attrs := obj.Attributes()
+				matcher, _ := attrs["type"].(types.String)
+				value, _ := attrs["value"].(types.String)
+				if matcher.IsNull() || matcher.IsUnknown() || value.IsNull() || value.IsUnknown() {
+					continue
+				}
+
+				key := [2]string{utils.NormalizeEnum(matcher.ValueString(), fileAccessProcessTypePrefix), value.ValueString()}
 				if first, dup := seen[key]; dup {
 					resp.Diagnostics.AddAttributeError(
 						path.Root("process_overrides").AtListIndex(i),
 						"Duplicate process override",
 						fmt.Sprintf("process_overrides must be unique on (type, value); entry %d already matches %s %q.",
-							first, m.Type.ValueString(), m.Value.ValueString()),
+							first, matcher.ValueString(), value.ValueString()),
 					)
 					continue
 				}

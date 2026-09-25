@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -575,5 +576,78 @@ func TestSyncSettingsProcessOverridesRejectsDuplicates(t *testing.T) {
 		entry("FILE_ACCESS_PROCESS_TYPE_TEAM_ID", "EQHXZ8M8AV", "ALLOW"),
 	}); !diags.HasError() {
 		t.Error("a duplicate spelled with the prefixed alias should be rejected")
+	}
+}
+
+// TestSyncSettingsProcessOverridesSkipsUnknownEntries checks the duplicate
+// check tolerates an entry that is still unknown at plan time, which happens
+// when the object comes from a resource that has not been created yet. The
+// list is known, so it is inspected, but converting an unknown object to a
+// struct would fail the plan for a valid configuration.
+func TestSyncSettingsProcessOverridesSkipsUnknownEntries(t *testing.T) {
+	ctx := context.Background()
+	r := &SyncSettingsResource{}
+
+	var sResp resource.SchemaResponse
+	r.Schema(ctx, resource.SchemaRequest{}, &sResp)
+
+	known, d := types.ObjectValue(fileAccessProcessOverrideAttrTypes, map[string]attr.Value{
+		"type":                   types.StringValue("TEAM_ID"),
+		"value":                  types.StringValue("EQHXZ8M8AV"),
+		"action":                 types.StringValue("DENY"),
+		"allow_read_access":      types.BoolNull(),
+		"enable_silent_mode":     types.BoolNull(),
+		"enable_silent_tty_mode": types.BoolNull(),
+		"block_message":          types.StringNull(),
+		"event_detail_url":       types.StringNull(),
+		"event_detail_text":      types.StringNull(),
+	})
+	if d.HasError() {
+		t.Fatalf("building object: %v", d)
+	}
+
+	for _, c := range []struct {
+		name     string
+		elements []attr.Value
+	}{
+		{"a wholly unknown entry", []attr.Value{known, types.ObjectUnknown(fileAccessProcessOverrideAttrTypes)}},
+		{"an entry whose matcher is unknown", []attr.Value{known, types.ObjectValueMust(fileAccessProcessOverrideAttrTypes, map[string]attr.Value{
+			"type":                   types.StringValue("TEAM_ID"),
+			"value":                  types.StringUnknown(),
+			"action":                 types.StringValue("ALLOW"),
+			"allow_read_access":      types.BoolNull(),
+			"enable_silent_mode":     types.BoolNull(),
+			"enable_silent_tty_mode": types.BoolNull(),
+			"block_message":          types.StringNull(),
+			"event_detail_url":       types.StringNull(),
+			"event_detail_text":      types.StringNull(),
+		})}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			list, d := types.ListValue(fileAccessProcessOverrideObjectType, c.elements)
+			if d.HasError() {
+				t.Fatalf("building list: %v", d)
+			}
+
+			st := tfsdk.State{Schema: sResp.Schema}
+			if diags := st.Set(ctx, SyncSettingsResourceModel{
+				Tag:                        types.StringValue("dev"),
+				ProcessOverrides:           list,
+				TelemetryFilterExpressions: types.ListNull(types.StringType),
+			}); diags.HasError() {
+				t.Fatalf("building config: %v", diags)
+			}
+			cfg := tfsdk.Config{Schema: sResp.Schema, Raw: st.Raw}
+
+			var all diag.Diagnostics
+			for _, cv := range r.ConfigValidators(ctx) {
+				vResp := &resource.ValidateConfigResponse{}
+				cv.ValidateResource(ctx, resource.ValidateConfigRequest{Config: cfg}, vResp)
+				all.Append(vResp.Diagnostics...)
+			}
+			if all.HasError() {
+				t.Errorf("an unknown entry should not fail the plan: %v", all)
+			}
+		})
 	}
 }

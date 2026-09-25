@@ -77,7 +77,7 @@ Each entry's `type` and `value` must match a process listed in the `process_*` a
 
 Omit the attribute rather than setting it to an empty list: the two mean the same thing to the server, which is a plain repeated field.
 
-Requires Santa 2026.8 or newer; older agents fall back to the outcome the rule implies for a process it does not list, which is never more permissive than the override. (see [below for nested schema](#nestedatt--process_overrides))
+Requires Santa 2026.8 or newer. Older agents ignore the overrides entirely and treat the process the way the rule treats one it does not list, which is a denial under `PathsWithAllowedProcesses` but an allow under `PathsWithDeniedProcesses`. Do not rely on a `DENY` override to block a process on an older agent under a `PathsWithDeniedProcesses` rule. (see [below for nested schema](#nestedatt--process_overrides))
 - `process_signing_ids` (List of String) Process signing IDs that this rule applies to.
 - `process_team_ids` (List of String) Process team IDs that this rule applies to.
 
