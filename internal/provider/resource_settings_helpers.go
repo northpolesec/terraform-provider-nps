@@ -2,8 +2,10 @@
 package provider
 
 import (
+	"context"
 	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"google.golang.org/protobuf/types/known/durationpb"
 )
@@ -92,4 +94,34 @@ func tfStringToDuration(v types.String) (*durationpb.Duration, error) {
 		return nil, err
 	}
 	return durationpb.New(d), nil
+}
+
+// int32sToTFInt64Set builds a set of Int64 from a repeated int32 proto field,
+// returning a null set (rather than an empty one) when there are no values so
+// it matches an unset attribute.
+func int32sToTFInt64Set(ctx context.Context, values []int32, diags *diag.Diagnostics) types.Set {
+	if len(values) == 0 {
+		return types.SetNull(types.Int64Type)
+	}
+	out := make([]int64, 0, len(values))
+	for _, v := range values {
+		out = append(out, int64(v))
+	}
+	set, d := types.SetValueFrom(ctx, types.Int64Type, out)
+	diags.Append(d...)
+	return set
+}
+
+// tfInt64SetToInt32s converts a set of Int64 to a repeated int32 proto field.
+func tfInt64SetToInt32s(ctx context.Context, set types.Set, diags *diag.Diagnostics) []int32 {
+	if set.IsNull() || set.IsUnknown() {
+		return nil
+	}
+	var values []int64
+	diags.Append(set.ElementsAs(ctx, &values, false)...)
+	out := make([]int32, 0, len(values))
+	for _, v := range values {
+		out = append(out, int32(v))
+	}
+	return out
 }

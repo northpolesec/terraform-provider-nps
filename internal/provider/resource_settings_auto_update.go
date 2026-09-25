@@ -6,7 +6,9 @@ import (
 	"fmt"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
+	"github.com/hashicorp/terraform-plugin-framework-validators/setvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/identityschema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -36,9 +38,23 @@ type AutoUpdateSettingsIdentityModel struct {
 }
 
 type AutoUpdateSettingsResourceModel struct {
-	Mode      types.String `tfsdk:"mode"`
-	StartHour types.Int64  `tfsdk:"start_hour"`
-	EndHour   types.Int64  `tfsdk:"end_hour"`
+	Mode       types.String `tfsdk:"mode"`
+	StartHour  types.Int64  `tfsdk:"start_hour"`
+	EndHour    types.Int64  `tfsdk:"end_hour"`
+	DaysOfWeek types.Set    `tfsdk:"days_of_week"`
+}
+
+// autoUpdateSettings builds the full AutoUpdateSettings message from the
+// model. UpdateAutoUpdateSettings replaces the whole message rather than
+// merging, so every field the schema models has to be sent on every call, and
+// any field it does not model would be erased.
+func autoUpdateSettings(ctx context.Context, data AutoUpdateSettingsResourceModel, diags *diag.Diagnostics) *apipb.AutoUpdateSettings {
+	return apipb.AutoUpdateSettings_builder{
+		Mode:       apipb.AutoUpdateMode(apipb.AutoUpdateMode_value[data.Mode.ValueString()]),
+		StartHour:  tfInt64ToInt32Ptr(data.StartHour),
+		EndHour:    tfInt64ToInt32Ptr(data.EndHour),
+		DaysOfWeek: tfInt64SetToInt32s(ctx, data.DaysOfWeek, diags),
+	}.Build()
 }
 
 func (r *AutoUpdateSettingsResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -79,6 +95,22 @@ func (r *AutoUpdateSettingsResource) Schema(ctx context.Context, req resource.Sc
 					int64validator.Between(0, 23),
 				},
 			},
+			"days_of_week": schema.SetAttribute{
+				Description:         "The days of the week in UTC on which updates are allowed, as 0 (Sunday) through 6 (Saturday). Leave unset to allow updates on any day; an empty set means the same thing and is rejected so the two spellings cannot diff against each other. Combined with start_hour and end_hour to restrict updates to e.g. Monday nights only.",
+				MarkdownDescription: "The days of the week in UTC on which updates are allowed, as `0` (Sunday) through `6` (Saturday). Leave unset to allow updates on any day; an empty set means the same thing and is rejected so the two spellings cannot diff against each other. Combined with `start_hour` and `end_hour` to restrict updates to e.g. Monday nights only.",
+				Optional:            true,
+				ElementType:         types.Int64Type,
+				Validators: []validator.Set{
+					// An empty set and an unset attribute both mean "any day" on a
+					// plain repeated field, and the server cannot report the
+					// difference back, so only one of the two spellings can survive
+					// a refresh. Reject the redundant one rather than let it diff on
+					// every plan. SizeAtMost mirrors the proto's max_items; a set
+					// already gives the uniqueness it also requires.
+					setvalidator.SizeBetween(1, 7),
+					setvalidator.ValueInt64sAre(int64validator.Between(0, 6)),
+				},
+			},
 		},
 	}
 }
@@ -106,12 +138,10 @@ func (r *AutoUpdateSettingsResource) Create(ctx context.Context, req resource.Cr
 		return
 	}
 
-	mode := apipb.AutoUpdateMode(apipb.AutoUpdateMode_value[data.Mode.ValueString()])
-	settings := apipb.AutoUpdateSettings_builder{
-		Mode:      mode,
-		StartHour: tfInt64ToInt32Ptr(data.StartHour),
-		EndHour:   tfInt64ToInt32Ptr(data.EndHour),
-	}.Build()
+	settings := autoUpdateSettings(ctx, data, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
 	if _, err := r.client.UpdateAutoUpdateSettings(ctx, apipb.UpdateAutoUpdateSettingsRequest_builder{Settings: settings}.Build()); err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Failed to update auto-update settings: %v", err))
@@ -147,6 +177,10 @@ func (r *AutoUpdateSettingsResource) Read(ctx context.Context, req resource.Read
 		}
 		data.StartHour = int32PtrToTFInt64(s.StartHour)
 		data.EndHour = int32PtrToTFInt64(s.EndHour)
+		data.DaysOfWeek = int32sToTFInt64Set(ctx, s.GetDaysOfWeek(), &resp.Diagnostics)
+		if resp.Diagnostics.HasError() {
+			return
+		}
 	}
 
 	resp.Diagnostics.Append(resp.Identity.Set(ctx, AutoUpdateSettingsIdentityModel{Id: types.StringValue("auto_update_settings")})...)
@@ -160,14 +194,10 @@ func (r *AutoUpdateSettingsResource) Update(ctx context.Context, req resource.Up
 		return
 	}
 
-	// UpdateAutoUpdateSettings replaces the whole AutoUpdateSettings message;
-	// it is not presence-sensitive, so we always send the full plan.
-	mode := apipb.AutoUpdateMode(apipb.AutoUpdateMode_value[plan.Mode.ValueString()])
-	settings := apipb.AutoUpdateSettings_builder{
-		Mode:      mode,
-		StartHour: tfInt64ToInt32Ptr(plan.StartHour),
-		EndHour:   tfInt64ToInt32Ptr(plan.EndHour),
-	}.Build()
+	settings := autoUpdateSettings(ctx, plan, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
 	if _, err := r.client.UpdateAutoUpdateSettings(ctx, apipb.UpdateAutoUpdateSettingsRequest_builder{Settings: settings}.Build()); err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Failed to update auto-update settings: %v", err))
@@ -187,9 +217,12 @@ func (r *AutoUpdateSettingsResource) Delete(ctx context.Context, req resource.De
 func (r *AutoUpdateSettingsResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	// Placeholder state; Read is invoked immediately after import and
 	// overwrites this with the authoritative server values. The placeholder
-	// must satisfy the schema's OneOf validator on Mode.
+	// must satisfy the schema's OneOf validator on Mode, and every collection
+	// needs its element type: a zero-value types.Set cannot be written to state,
+	// which would fail the import before Read ever runs.
 	resp.Diagnostics.Append(resp.State.Set(ctx, &AutoUpdateSettingsResourceModel{
-		Mode: types.StringValue("AUTO_UPDATE_MODE_DISABLED"),
+		Mode:       types.StringValue("AUTO_UPDATE_MODE_DISABLED"),
+		DaysOfWeek: types.SetNull(types.Int64Type),
 	})...)
 }
 

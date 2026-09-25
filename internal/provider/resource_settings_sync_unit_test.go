@@ -5,9 +5,15 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"google.golang.org/protobuf/proto"
 
@@ -331,6 +337,123 @@ func TestSyncSettingsClientModeUnknownIsNull(t *testing.T) {
 	}
 }
 
+// TestSyncSettingsPreviouslyDroppedFieldsRoundtrip is the regression test for
+// the fields the model did not carry. This resource does a delete-then-update
+// on every apply, so an unmodelled field was not merely unmanaged: it was
+// destroyed the first time Terraform touched the tag.
+func TestSyncSettingsPreviouslyDroppedFieldsRoundtrip(t *testing.T) {
+	ctx := context.Background()
+
+	original := apipb.SyncSettings_builder{
+		Tag:                       "dev",
+		BatchSize:                 proto.Uint32(250),
+		EnableAllEventUpload:      proto.Bool(true),
+		AutoBundleInventory:       proto.Bool(false),
+		StorePlatformBinaryEvents: proto.Bool(true),
+		NetworkExtension: apipb.SyncSettings_NetworkExtension_builder{
+			Enable:            proto.Bool(true),
+			FlowDefaultAction: apipb.NetworkFlowDefaultAction_NETWORK_FLOW_DEFAULT_ACTION_DENY.Enum(),
+		}.Build(),
+		CelFallbackRules: apipb.SyncSettings_CELFallbackRules_builder{
+			Rules: []*apipb.SyncSettings_CELFallbackRule{
+				apipb.SyncSettings_CELFallbackRule_builder{
+					CelExpr:                "true",
+					EventDetailButtonLabel: proto.String("Ask IT"),
+				}.Build(),
+			},
+		}.Build(),
+		ProcessOverrides: apipb.SyncSettings_ProcessOverrides_builder{
+			Overrides: []*apipb.FileAccessRule_ProcessOverride{
+				apipb.FileAccessRule_ProcessOverride_builder{
+					Type:   apipb.FileAccessProcessType_FILE_ACCESS_PROCESS_TYPE_TEAM_ID,
+					Value:  "EQHXZ8M8AV",
+					Action: apipb.FileAccessProcessAction_FILE_ACCESS_PROCESS_ACTION_DENY,
+				}.Build(),
+			},
+		}.Build(),
+	}.Build()
+
+	model, diags := syncSettingsProtoToModel(ctx, original)
+	if diags.HasError() {
+		t.Fatalf("proto -> model: %v", diags)
+	}
+
+	round, diags := syncSettingsModelToProto(ctx, &model)
+	if diags.HasError() {
+		t.Fatalf("model -> proto: %v", diags)
+	}
+
+	if round.GetBatchSize() != 250 {
+		t.Errorf("batch_size: got %d, want 250", round.GetBatchSize())
+	}
+	if !round.GetEnableAllEventUpload() {
+		t.Error("enable_all_event_upload erased")
+	}
+	if !round.HasAutoBundleInventory() || round.GetAutoBundleInventory() {
+		t.Error("an explicit auto_bundle_inventory = false did not survive")
+	}
+	if !round.GetStorePlatformBinaryEvents() {
+		t.Error("store_platform_binary_events erased")
+	}
+
+	ne := round.GetNetworkExtension()
+	if ne == nil || !ne.GetEnable() {
+		t.Fatalf("network extension erased: %v", ne)
+	}
+	if ne.GetFlowDefaultAction() != apipb.NetworkFlowDefaultAction_NETWORK_FLOW_DEFAULT_ACTION_DENY {
+		t.Errorf("flow_default_action: got %v, want DENY", ne.GetFlowDefaultAction())
+	}
+
+	rules := round.GetCelFallbackRules().GetRules()
+	if len(rules) != 1 || rules[0].GetEventDetailButtonLabel() != "Ask IT" {
+		t.Errorf("cel fallback event_detail_button_label erased: %v", rules)
+	}
+
+	overrides := round.GetProcessOverrides().GetOverrides()
+	if len(overrides) != 1 || overrides[0].GetValue() != "EQHXZ8M8AV" {
+		t.Fatalf("process_overrides erased: %v", overrides)
+	}
+	if overrides[0].GetAction() != apipb.FileAccessProcessAction_FILE_ACCESS_PROCESS_ACTION_DENY {
+		t.Errorf("override action: got %v, want DENY", overrides[0].GetAction())
+	}
+}
+
+// TestSyncSettingsProcessOverridesUnsetVsEmpty checks the presence distinction
+// the proto documents: absent means "inherit from a lower-precedence tag",
+// while an empty list means "managed, explicitly no overrides".
+func TestSyncSettingsProcessOverridesUnsetVsEmpty(t *testing.T) {
+	ctx := context.Background()
+
+	unset, diags := syncSettingsProtoToModel(ctx, apipb.SyncSettings_builder{Tag: "dev"}.Build())
+	if diags.HasError() {
+		t.Fatalf("unexpected diagnostics: %v", diags)
+	}
+	if !unset.ProcessOverrides.IsNull() {
+		t.Errorf("absent process_overrides should be null, got %v", unset.ProcessOverrides)
+	}
+	if round, _ := syncSettingsModelToProto(ctx, &unset); round.HasProcessOverrides() {
+		t.Error("a null process_overrides must send no message")
+	}
+
+	empty, diags := syncSettingsProtoToModel(ctx, apipb.SyncSettings_builder{
+		Tag:              "dev",
+		ProcessOverrides: apipb.SyncSettings_ProcessOverrides_builder{}.Build(),
+	}.Build())
+	if diags.HasError() {
+		t.Fatalf("unexpected diagnostics: %v", diags)
+	}
+	if empty.ProcessOverrides.IsNull() || len(empty.ProcessOverrides.Elements()) != 0 {
+		t.Errorf("an empty process_overrides should be an empty list, got %v", empty.ProcessOverrides)
+	}
+	round, diags := syncSettingsModelToProto(ctx, &empty)
+	if diags.HasError() {
+		t.Fatalf("unexpected diagnostics: %v", diags)
+	}
+	if !round.HasProcessOverrides() || len(round.GetProcessOverrides().GetOverrides()) != 0 {
+		t.Error("an empty process_overrides must send an empty message")
+	}
+}
+
 // TestSyncSettingsOnDemandUnspecifiedStateIsNull checks a server-reported
 // UNSPECIFIED state is not written into state. The schema's own OneOf validator
 // rejects it, so writing it made the next plan fail on state the provider wrote.
@@ -351,5 +474,180 @@ func TestSyncSettingsOnDemandUnspecifiedStateIsNull(t *testing.T) {
 	}
 	if model.OnDemandAdminMode == nil || !model.OnDemandAdminMode.State.IsNull() {
 		t.Errorf("admin mode state: got %v, want null", model.OnDemandAdminMode)
+	}
+}
+
+// TestSyncSettingsCelFallbackButtonLabelLength pins the label to the max_len
+// the API enforces, so an over-long value fails the plan rather than the apply.
+func TestSyncSettingsCelFallbackButtonLabelLength(t *testing.T) {
+	ctx := context.Background()
+	var sResp resource.SchemaResponse
+	(&SyncSettingsResource{}).Schema(ctx, resource.SchemaRequest{}, &sResp)
+
+	block, ok := sResp.Schema.Blocks["cel_fallback_rule"].(schema.ListNestedBlock)
+	if !ok {
+		t.Fatal("cel_fallback_rule is not a ListNestedBlock")
+	}
+	attribute, ok := block.NestedObject.Attributes["event_detail_button_label"].(schema.StringAttribute)
+	if !ok {
+		t.Fatal("event_detail_button_label is not a StringAttribute")
+	}
+
+	validate := func(s string) diag.Diagnostics {
+		var diags diag.Diagnostics
+		for _, v := range attribute.Validators {
+			vResp := &validator.StringResponse{}
+			v.ValidateString(ctx, validator.StringRequest{ConfigValue: types.StringValue(s)}, vResp)
+			diags.Append(vResp.Diagnostics...)
+		}
+		return diags
+	}
+
+	if diags := validate(strings.Repeat("a", celFallbackButtonLabelMaxLen)); diags.HasError() {
+		t.Errorf("a %d-character label should be accepted: %v", celFallbackButtonLabelMaxLen, diags)
+	}
+	if diags := validate(strings.Repeat("a", celFallbackButtonLabelMaxLen+1)); !diags.HasError() {
+		t.Errorf("a %d-character label should be rejected", celFallbackButtonLabelMaxLen+1)
+	}
+}
+
+// TestSyncSettingsProcessOverridesRejectsDuplicates checks a duplicate
+// (type, value) pair fails at plan time. The server requires the pair to be
+// unique and this resource deletes the tag's settings before writing the new
+// ones, so a server-side rejection would leave the tag with nothing.
+func TestSyncSettingsProcessOverridesRejectsDuplicates(t *testing.T) {
+	ctx := context.Background()
+	r := &SyncSettingsResource{}
+
+	var sResp resource.SchemaResponse
+	r.Schema(ctx, resource.SchemaRequest{}, &sResp)
+
+	validate := func(overrides []fileAccessProcessOverrideModel) diag.Diagnostics {
+		list, d := types.ListValueFrom(ctx, fileAccessProcessOverrideObjectType, overrides)
+		if d.HasError() {
+			t.Fatalf("building list: %v", d)
+		}
+		// tfsdk.Config has no Set, so round-trip the model through a State to
+		// get the raw value the validators read.
+		st := tfsdk.State{Schema: sResp.Schema}
+		if diags := st.Set(ctx, SyncSettingsResourceModel{
+			Tag:                        types.StringValue("dev"),
+			ProcessOverrides:           list,
+			TelemetryFilterExpressions: types.ListNull(types.StringType),
+		}); diags.HasError() {
+			t.Fatalf("building config: %v", diags)
+		}
+		cfg := tfsdk.Config{Schema: sResp.Schema, Raw: st.Raw}
+
+		var all diag.Diagnostics
+		for _, cv := range r.ConfigValidators(ctx) {
+			vResp := &resource.ValidateConfigResponse{}
+			cv.ValidateResource(ctx, resource.ValidateConfigRequest{Config: cfg}, vResp)
+			all.Append(vResp.Diagnostics...)
+		}
+		return all
+	}
+
+	entry := func(typ, value, action string) fileAccessProcessOverrideModel {
+		return fileAccessProcessOverrideModel{
+			Type:   types.StringValue(typ),
+			Value:  types.StringValue(value),
+			Action: types.StringValue(action),
+		}
+	}
+
+	if diags := validate([]fileAccessProcessOverrideModel{
+		entry("TEAM_ID", "EQHXZ8M8AV", "DENY"),
+		entry("SIGNING_ID", "EQHXZ8M8AV", "ALLOW"),
+	}); diags.HasError() {
+		t.Errorf("distinct matchers should be accepted: %v", diags)
+	}
+
+	if diags := validate([]fileAccessProcessOverrideModel{
+		entry("TEAM_ID", "EQHXZ8M8AV", "DENY"),
+		entry("TEAM_ID", "EQHXZ8M8AV", "ALLOW"),
+	}); !diags.HasError() {
+		t.Error("a duplicate (type, value) should be rejected")
+	}
+
+	// The two accepted spellings of a matcher type are the same matcher.
+	if diags := validate([]fileAccessProcessOverrideModel{
+		entry("TEAM_ID", "EQHXZ8M8AV", "DENY"),
+		entry("FILE_ACCESS_PROCESS_TYPE_TEAM_ID", "EQHXZ8M8AV", "ALLOW"),
+	}); !diags.HasError() {
+		t.Error("a duplicate spelled with the prefixed alias should be rejected")
+	}
+}
+
+// TestSyncSettingsProcessOverridesSkipsUnknownEntries checks the duplicate
+// check tolerates an entry that is still unknown at plan time, which happens
+// when the object comes from a resource that has not been created yet. The
+// list is known, so it is inspected, but converting an unknown object to a
+// struct would fail the plan for a valid configuration.
+func TestSyncSettingsProcessOverridesSkipsUnknownEntries(t *testing.T) {
+	ctx := context.Background()
+	r := &SyncSettingsResource{}
+
+	var sResp resource.SchemaResponse
+	r.Schema(ctx, resource.SchemaRequest{}, &sResp)
+
+	known, d := types.ObjectValue(fileAccessProcessOverrideAttrTypes, map[string]attr.Value{
+		"type":                   types.StringValue("TEAM_ID"),
+		"value":                  types.StringValue("EQHXZ8M8AV"),
+		"action":                 types.StringValue("DENY"),
+		"allow_read_access":      types.BoolNull(),
+		"enable_silent_mode":     types.BoolNull(),
+		"enable_silent_tty_mode": types.BoolNull(),
+		"block_message":          types.StringNull(),
+		"event_detail_url":       types.StringNull(),
+		"event_detail_text":      types.StringNull(),
+	})
+	if d.HasError() {
+		t.Fatalf("building object: %v", d)
+	}
+
+	for _, c := range []struct {
+		name     string
+		elements []attr.Value
+	}{
+		{"a wholly unknown entry", []attr.Value{known, types.ObjectUnknown(fileAccessProcessOverrideAttrTypes)}},
+		{"an entry whose matcher is unknown", []attr.Value{known, types.ObjectValueMust(fileAccessProcessOverrideAttrTypes, map[string]attr.Value{
+			"type":                   types.StringValue("TEAM_ID"),
+			"value":                  types.StringUnknown(),
+			"action":                 types.StringValue("ALLOW"),
+			"allow_read_access":      types.BoolNull(),
+			"enable_silent_mode":     types.BoolNull(),
+			"enable_silent_tty_mode": types.BoolNull(),
+			"block_message":          types.StringNull(),
+			"event_detail_url":       types.StringNull(),
+			"event_detail_text":      types.StringNull(),
+		})}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			list, d := types.ListValue(fileAccessProcessOverrideObjectType, c.elements)
+			if d.HasError() {
+				t.Fatalf("building list: %v", d)
+			}
+
+			st := tfsdk.State{Schema: sResp.Schema}
+			if diags := st.Set(ctx, SyncSettingsResourceModel{
+				Tag:                        types.StringValue("dev"),
+				ProcessOverrides:           list,
+				TelemetryFilterExpressions: types.ListNull(types.StringType),
+			}); diags.HasError() {
+				t.Fatalf("building config: %v", diags)
+			}
+			cfg := tfsdk.Config{Schema: sResp.Schema, Raw: st.Raw}
+
+			var all diag.Diagnostics
+			for _, cv := range r.ConfigValidators(ctx) {
+				vResp := &resource.ValidateConfigResponse{}
+				cv.ValidateResource(ctx, resource.ValidateConfigRequest{Config: cfg}, vResp)
+				all.Append(vResp.Diagnostics...)
+			}
+			if all.HasError() {
+				t.Errorf("an unknown entry should not fail the plan: %v", all)
+			}
+		})
 	}
 }
