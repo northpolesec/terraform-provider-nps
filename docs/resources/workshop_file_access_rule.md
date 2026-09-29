@@ -34,6 +34,17 @@ resource "nps_workshop_file_access_rule" "ChromeCookies" {
   process_signing_ids = [
     "EQHXZ8M8AV:com.google.Chrome*"
   ]
+
+  # Chrome is one of the allowed processes above, but audit its access rather
+  # than allowing it silently. Every attribute left out of an override entry
+  # inherits the rule's own value.
+  process_overrides = [
+    {
+      type   = "SIGNING_ID"
+      value  = "EQHXZ8M8AV:com.google.Chrome*"
+      action = "AUDIT"
+    },
+  ]
 }
 ```
 
@@ -60,12 +71,41 @@ resource "nps_workshop_file_access_rule" "ChromeCookies" {
 - `process_binary_paths` (List of String) Process binary paths that this rule applies to.
 - `process_cd_hashes` (List of String) Process CDHashes that this rule applies to.
 - `process_certificate_sha256s` (List of String) Process certificate SHA256 hashes that this rule applies to.
+- `process_overrides` (Attributes List) Per-process overrides of this rule's own settings, so that e.g. one process can be denied silently under a rule that otherwise allows the processes it lists.
+
+Each entry's `type` and `value` must match a process listed in the `process_*` attributes above; overrides referencing an unlisted process are rejected. Unset attributes within an entry inherit the rule's value.
+
+Omit the attribute rather than setting it to an empty list: the two mean the same thing to the server, which is a plain repeated field.
+
+Requires Santa 2026.8 or newer. Older agents ignore the overrides entirely and treat the process the way the rule treats one it does not list, which is a denial under `PathsWithAllowedProcesses` but an allow under `PathsWithDeniedProcesses`. Do not rely on a `DENY` override to block a process on an older agent under a `PathsWithDeniedProcesses` rule. (see [below for nested schema](#nestedatt--process_overrides))
 - `process_signing_ids` (List of String) Process signing IDs that this rule applies to.
 - `process_team_ids` (List of String) Process team IDs that this rule applies to.
 
 ### Read-Only
 
 - `id` (Number) The server-generated ID of this file access rule. This ID is reassigned on every upsert, including in-place updates, so it must not be relied on as a stable identifier across applies.
+
+<a id="nestedatt--process_overrides"></a>
+### Nested Schema for `process_overrides`
+
+Required:
+
+- `type` (String) Which kind of process matcher this entry applies to. The possible values are: `BINARY_PATH`, `CD_HASH`, `SIGNING_ID`, `CERTIFICATE_SHA256`, and `TEAM_ID`. The `FILE_ACCESS_PROCESS_TYPE_`-prefixed spellings are accepted aliases.
+- `value` (String) The process matcher value, which must appear in the corresponding `process_*` attribute of the rule.
+
+Optional:
+
+- `action` (String) The action this rule takes for the process. The possible values are: `ALLOW`, `AUDIT`, and `DENY`. Leave unset to inherit the outcome the rule's `rule_type` implies.
+
+`DENY` does not by itself stop the process reading the files: an unset `allow_read_access` inherits the rule's value, so set `allow_read_access` to `false` as well to deny reads.
+
+The `FILE_ACCESS_PROCESS_ACTION_`-prefixed spellings are accepted aliases.
+- `allow_read_access` (Boolean) Overrides the rule's `allow_read_access` for this process. Unset inherits it.
+- `block_message` (String) Overrides the rule's `block_message` for this process. Unset inherits it.
+- `enable_silent_mode` (Boolean) Overrides the rule's `enable_silent_mode` for this process. Unset inherits it.
+- `enable_silent_tty_mode` (Boolean) Overrides the rule's `enable_silent_tty_mode` for this process. Unset inherits it.
+- `event_detail_text` (String) Overrides the rule's `event_detail_text` for this process. Unset inherits it.
+- `event_detail_url` (String) Overrides the rule's `event_detail_url` for this process. Unset inherits it.
 
 ## Import
 

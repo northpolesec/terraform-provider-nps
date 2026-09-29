@@ -29,5 +29,6 @@ resource "nps_workshop_settings_auto_update" "settings" {
 
 ### Optional
 
+- `days_of_week` (Set of Number) The days of the week in UTC on which updates are allowed, as `0` (Sunday) through `6` (Saturday). Leave unset to allow updates on any day; an empty set means the same thing and is rejected so the two spellings cannot diff against each other. Combined with `start_hour` and `end_hour` to restrict updates to e.g. Monday nights only.
 - `end_hour` (Number) The end hour of the update window in UTC (0-23). Supports overnight windows: if `start_hour > end_hour`, the window wraps around midnight.
 - `start_hour` (Number) The start hour of the update window in UTC (0-23). If both `start_hour` and `end_hour` are unset and mode is not disabled, updates can occur at any hour.

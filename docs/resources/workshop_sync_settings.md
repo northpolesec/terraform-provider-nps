@@ -61,18 +61,26 @@ resource "nps_workshop_sync_settings" "dev_settings" {
 ### Optional
 
 - `allowed_path_regex` (String) Regex matching paths whose executions are allowed. Set to an empty string to explicitly clear any lower-precedence tag's value.
+- `auto_bundle_inventory` (Boolean) Kill switch for automatically requesting bundle inventory from hosts for allow-unknown events. Leaving it unset inherits the value from a lower-precedence tag, which resolves to the global default of `true` unless another tag sets it to `false`.
+- `batch_size` (Number) Number of events a host uploads per request.
 - `blocked_path_regex` (String) Regex matching paths whose executions are blocked. Set to an empty string to explicitly clear any lower-precedence tag's value.
 - `cel_fallback_rule` (Block List) CEL fallback rules evaluated when no static rule matches. The block may be repeated; the order is preserved. (see [below for nested schema](#nestedblock--cel_fallback_rule))
 - `client_mode` (String) Santa client mode for hosts in this tag. One of: `MONITOR`, `LOCKDOWN`, `STANDALONE`.
+- `enable_all_event_upload` (Boolean) Whether hosts upload every execution event rather than only blocked and unknown ones.
 - `enable_transitive_rules` (Boolean) Whether transitive rule creation is enabled.
 - `encrypted_removable_media_policy` (Block, Optional) Override removable-media policy for encrypted volumes. If unset, encrypted volumes follow removable_media_policy. (see [below for nested schema](#nestedblock--encrypted_removable_media_policy))
 - `full_sync_interval` (Number) Seconds between full syncs. Must be between `60` and `86400` when set.
 - `network_extension_enabled` (Boolean) Whether the Santa network extension is enabled.
+- `network_flow_default_action` (String) Default action applied to network flows that match no network flow rule. One of: `ALLOW`, `DENY`. The `NETWORK_FLOW_DEFAULT_ACTION_`-prefixed spellings are accepted aliases.
 - `network_mount` (Block, Optional) Network mount handling settings. (see [below for nested schema](#nestedblock--network_mount))
 - `on_demand_admin_mode` (Block, Optional) On-demand admin mode settings, allowing users to elevate to administrator for a bounded time. (see [below for nested schema](#nestedblock--on_demand_admin_mode))
 - `on_demand_monitor_mode` (Block, Optional) On-demand monitor mode settings. (see [below for nested schema](#nestedblock--on_demand_monitor_mode))
+- `process_overrides` (Attributes List) Processes composed into path-centric file access rules at rule download time. Resolved per host wholesale: the highest-priority tag that sets this attribute wins outright, and lists are never merged across tags.
+
+Unset leaves the field unspecified (lower-precedence tag applies); an empty list explicitly declares no overrides. Each entry must be unique on `(type, value)`, and `action` must be concrete here since there is no rule to inherit from. (see [below for nested schema](#nestedatt--process_overrides))
 - `push_sync_interval` (Number) Seconds between full syncs requested via push notifications (proto field `push_notification_full_sync_interval_seconds`). Must be between `60` and `86400` when set.
 - `removable_media_policy` (Block, Optional) Baseline removable-media policy applied to every mount. (see [below for nested schema](#nestedblock--removable_media_policy))
+- `store_platform_binary_events` (Boolean) Whether Workshop writes a per-event row for every execution it allowed because the binary ships with the OS (`ALLOW_PLATFORM`). These are the highest-volume decision by a wide margin, so storage is opt-in: leaving it unset keeps only the aggregate counts. Workshop-side only, never sent to the Santa agent.
 - `telemetry_enabled` (Boolean) Whether telemetry upload is enabled for hosts in this tag. Backed by the tag's `TelemetryConfig` (managed via the `UpdateTelemetryConfig` RPC), not by `SyncSettings`. Leaving it unset removes any `TelemetryConfig` for the tag so a lower-precedence tag applies. Requires the telemetry feature to be enabled for the tenant.
 - `telemetry_filter_expressions` (List of String) CEL expressions filtering telemetry events. Unset leaves the field unspecified (lower-precedence tag applies); an empty list explicitly clears the inherited value.
 
@@ -87,6 +95,7 @@ Optional:
 
 - `custom_msg` (String) Optional custom message shown to the user when the rule blocks.
 - `custom_url` (String) Optional custom URL shown to the user when the rule blocks.
+- `event_detail_button_label` (String) Optional label for the button that opens `custom_url`. At most 48 characters.
 
 
 <a id="nestedblock--encrypted_removable_media_policy"></a>
@@ -127,6 +136,29 @@ Optional:
 - `default_duration_minutes` (Number) Default monitor-mode duration when the host requests entry without specifying one. Must not exceed `max_minutes`. Omit (rather than set `0`) to fall back to `max_minutes` as the default.
 - `max_minutes` (Number) Maximum number of minutes a machine may be in monitor mode. Required when `state` is `ENABLED`.
 - `state` (String) Whether on-demand monitor mode is enabled. One of: `ON_DEMAND_MONITOR_MODE_STATE_ENABLED`, `ON_DEMAND_MONITOR_MODE_STATE_DISABLED`.
+
+
+<a id="nestedatt--process_overrides"></a>
+### Nested Schema for `process_overrides`
+
+Required:
+
+- `action` (String) The action composed rules take for the process. The possible values are: `ALLOW`, `AUDIT`, and `DENY`. Required here: composition order is derived from the action, and there is no rule outcome to inherit.
+
+`DENY` does not by itself stop the process reading the files: an unset `allow_read_access` inherits the composed rule's value, so set `allow_read_access` to `false` as well to deny reads.
+
+The `FILE_ACCESS_PROCESS_ACTION_`-prefixed spellings are accepted aliases.
+- `type` (String) Which kind of process matcher this entry applies to. The possible values are: `BINARY_PATH`, `CD_HASH`, `SIGNING_ID`, `CERTIFICATE_SHA256`, and `TEAM_ID`. The `FILE_ACCESS_PROCESS_TYPE_`-prefixed spellings are accepted aliases.
+- `value` (String) The process matcher value.
+
+Optional:
+
+- `allow_read_access` (Boolean) Overrides the composed rule's `allow_read_access` for this process. Unset inherits it.
+- `block_message` (String) Overrides the composed rule's `block_message` for this process. Unset inherits it.
+- `enable_silent_mode` (Boolean) Overrides the composed rule's `enable_silent_mode` for this process. Unset inherits it.
+- `enable_silent_tty_mode` (Boolean) Overrides the composed rule's `enable_silent_tty_mode` for this process. Unset inherits it.
+- `event_detail_text` (String) Overrides the composed rule's `event_detail_text` for this process. Unset inherits it.
+- `event_detail_url` (String) Overrides the composed rule's `event_detail_url` for this process. Unset inherits it.
 
 
 <a id="nestedblock--removable_media_policy"></a>

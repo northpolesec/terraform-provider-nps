@@ -38,3 +38,47 @@ func TestEnumFormModifier(t *testing.T) {
 		})
 	}
 }
+
+// TestEnumFormLeavesConfiguredValueAlone is the regression test for a modifier
+// that rewrote a configured alias to the state spelling. Terraform rejects a
+// plan whose value for a configured attribute differs from the configuration,
+// so that produced "Provider produced invalid plan" rather than suppressing a
+// diff.
+func TestEnumFormLeavesConfiguredValueAlone(t *testing.T) {
+	const prefix = "OS_TYPE_"
+
+	for _, c := range []struct {
+		name        string
+		config      types.String
+		state, plan string
+		want        string
+	}{
+		{
+			name:   "configured alias is preserved",
+			config: types.StringValue("OS_TYPE_MACOS"),
+			state:  "MACOS", plan: "OS_TYPE_MACOS", want: "OS_TYPE_MACOS",
+		},
+		{
+			name:   "configured value equal to state is untouched",
+			config: types.StringValue("MACOS"),
+			state:  "MACOS", plan: "MACOS", want: "MACOS",
+		},
+		{
+			name:   "unconfigured value still takes the state spelling",
+			config: types.StringNull(),
+			state:  "OS_TYPE_MACOS", plan: "MACOS", want: "OS_TYPE_MACOS",
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			resp := &planmodifier.StringResponse{PlanValue: types.StringValue(c.plan)}
+			enumForm(prefix).PlanModifyString(context.Background(), planmodifier.StringRequest{
+				ConfigValue: c.config,
+				StateValue:  types.StringValue(c.state),
+				PlanValue:   types.StringValue(c.plan),
+			}, resp)
+			if resp.PlanValue.ValueString() != c.want {
+				t.Errorf("got %q, want %q", resp.PlanValue.ValueString(), c.want)
+			}
+		})
+	}
+}
