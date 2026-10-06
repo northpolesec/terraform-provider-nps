@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"strings"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
@@ -101,9 +102,9 @@ func APIKeyOrToken(ctx context.Context, inputKey, serverURL string) (credentials
 
 func createConfig(_ context.Context, endpoint string) (*oauth2.Config, bool, error) {
 	insecure := false
-	if endpoint == "localhost:8080" {
+	if strings.HasPrefix(endpoint, "localhost:") {
 		insecure = true
-		endpoint = "http://localhost:8080/.well-known/workos-client-id"
+		endpoint = fmt.Sprintf("http://%s/.well-known/workos-client-id", endpoint)
 	} else {
 		endpoint = fmt.Sprintf("https://%s/.well-known/workos-client-id", endpoint)
 	}
