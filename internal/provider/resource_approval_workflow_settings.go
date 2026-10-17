@@ -4,6 +4,7 @@ package provider
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
@@ -175,7 +176,9 @@ func (r *ApprovalWorkflowSettingsResource) Schema(ctx context.Context, req resou
 						MarkdownDescription: "Number of approvals required. Required with `approver_tag` or `approver_emails`.",
 						Optional:            true,
 						Validators: []validator.Int64{
-							int64validator.AtLeast(1),
+							// The proto field is a uint32; without the ceiling the
+							// conversion silently wraps (4294967296 becomes 0).
+							int64validator.Between(1, int64(math.MaxUint32)),
 						},
 					},
 					"chat_channel": schema.StringAttribute{
@@ -204,7 +207,9 @@ func (r *ApprovalWorkflowSettingsResource) Schema(ctx context.Context, req resou
 						MarkdownDescription: "Votes required to approve the software for the requestor alone. Required when the block is present.",
 						Optional:            true,
 						Validators: []validator.Int64{
-							int64validator.AtLeast(1),
+							// The proto field is a uint32; without the ceiling the
+							// conversion silently wraps (4294967296 becomes 0).
+							int64validator.Between(1, int64(math.MaxUint32)),
 						},
 					},
 					"tag_threshold": schema.Int64Attribute{
@@ -212,7 +217,9 @@ func (r *ApprovalWorkflowSettingsResource) Schema(ctx context.Context, req resou
 						MarkdownDescription: "Votes required to approve the software for every user the workflow's tag covers. Required when the block is present, and must be at least `local_threshold`.",
 						Optional:            true,
 						Validators: []validator.Int64{
-							int64validator.AtLeast(1),
+							// The proto field is a uint32; without the ceiling the
+							// conversion silently wraps (4294967296 becomes 0).
+							int64validator.Between(1, int64(math.MaxUint32)),
 						},
 					},
 					"tags_to_consider_votes_from": schema.ListAttribute{
@@ -611,19 +618,27 @@ func approvalWorkflowProtoToModel(ctx context.Context, prior *ApprovalWorkflowSe
 
 	switch s.WhichWorkflow() {
 	case apipb.ApprovalWorkflowSettings_SelfService_case:
+		priorSS := prior.SelfService
+		if priorSS == nil {
+			priorSS = &ApprovalWorkflowSelfServiceModel{}
+		}
 		out.SelfService = &ApprovalWorkflowSelfServiceModel{
-			RequireJustification: types.BoolValue(s.GetSelfService().GetRequireJustification()),
+			RequireJustification: boolOrNull(priorSS.RequireJustification, s.GetSelfService().GetRequireJustification()),
 		}
 	case apipb.ApprovalWorkflowSettings_DesignatedApprover_case:
 		da := s.GetDesignatedApprover()
+		priorDA := prior.DesignatedApprover
+		if priorDA == nil {
+			priorDA = &ApprovalWorkflowDesignatedApproverModel{}
+		}
 		m := &ApprovalWorkflowDesignatedApproverModel{
 			ApproverTag:          types.StringNull(),
 			ApproverEmails:       types.ListNull(types.StringType),
 			ApproverIsManager:    types.BoolNull(),
 			Threshold:            types.Int64Null(),
 			ChatChannel:          stringOrNull(da.GetChatChannel()),
-			RequireJustification: types.BoolValue(da.GetRequireJustification()),
-			AllowTagApproval:     types.BoolValue(da.GetAllowTagApproval()),
+			RequireJustification: boolOrNull(priorDA.RequireJustification, da.GetRequireJustification()),
+			AllowTagApproval:     boolOrNull(priorDA.AllowTagApproval, da.GetAllowTagApproval()),
 		}
 		switch da.WhichApprover() {
 		case apipb.DesignatedApproverWorkflowSettings_Tag_case:
@@ -640,11 +655,15 @@ func approvalWorkflowProtoToModel(ctx context.Context, prior *ApprovalWorkflowSe
 		out.DesignatedApprover = m
 	case apipb.ApprovalWorkflowSettings_SocialVoting_case:
 		sv := s.GetSocialVoting()
+		priorSV := prior.SocialVoting
+		if priorSV == nil {
+			priorSV = &ApprovalWorkflowSocialVotingModel{}
+		}
 		out.SocialVoting = &ApprovalWorkflowSocialVotingModel{
 			LocalThreshold:          types.Int64Value(int64(sv.GetLocalThreshold())),
 			TagThreshold:            types.Int64Value(int64(sv.GetTagThreshold())),
-			TagsToConsiderVotesFrom: voteTagsToTF(ctx, sv.GetTagsToConsiderVotesFrom(), s.GetTag(), prior.SocialVoting, diags),
-			RequireJustification:    types.BoolValue(sv.GetRequireJustification()),
+			TagsToConsiderVotesFrom: voteTagsToTF(ctx, sv.GetTagsToConsiderVotesFrom(), s.GetTag(), priorSV.TagsToConsiderVotesFrom, diags),
+			RequireJustification:    boolOrNull(priorSV.RequireJustification, sv.GetRequireJustification()),
 		}
 	}
 
@@ -654,9 +673,8 @@ func approvalWorkflowProtoToModel(ctx context.Context, prior *ApprovalWorkflowSe
 // voteTagsToTF keeps tags_to_consider_votes_from null when the configuration
 // left it unset and the server filled in its default (the workflow's own tag),
 // which would otherwise show up as a diff on every plan.
-func voteTagsToTF(ctx context.Context, tags []string, workflowTag string, prior *ApprovalWorkflowSocialVotingModel, diags *diag.Diagnostics) types.List {
-	priorUnset := prior == nil || prior.TagsToConsiderVotesFrom.IsNull()
-	if len(tags) == 0 || (priorUnset && len(tags) == 1 && tags[0] == workflowTag) {
+func voteTagsToTF(ctx context.Context, tags []string, workflowTag string, prior types.List, diags *diag.Diagnostics) types.List {
+	if len(tags) == 0 || (prior.IsNull() && len(tags) == 1 && tags[0] == workflowTag) {
 		return types.ListNull(types.StringType)
 	}
 	list, d := types.ListValueFrom(ctx, types.StringType, tags)
@@ -669,4 +687,15 @@ func stringOrNull(s string) types.String {
 		return types.StringNull()
 	}
 	return types.StringValue(s)
+}
+
+// boolOrNull keeps an optional boolean null when the configuration never set
+// it and the server reports the proto zero value. These fields have no
+// presence on the wire, so reading false back verbatim would diff against a
+// configuration that omitted the attribute, on every plan.
+func boolOrNull(prior types.Bool, v bool) types.Bool {
+	if !v && prior.IsNull() {
+		return types.BoolNull()
+	}
+	return types.BoolValue(v)
 }

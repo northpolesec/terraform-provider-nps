@@ -564,3 +564,81 @@ func TestApprovalWorkflowDeleteToleratesMissing(t *testing.T) {
 		t.Errorf("DeleteApprovalWorkflowSettings called %d times, want 1", fake.deleteCalls)
 	}
 }
+
+// TestApprovalWorkflowReadKeepsUnsetBoolsNull guards the refresh loop for the
+// presence-less booleans: the server cannot tell an omitted
+// require_justification from an explicit false, so reading false back
+// verbatim would diff against a configuration that never set it. The shipped
+// global example omits allow_tag_approval, which is exactly this case.
+func TestApprovalWorkflowReadKeepsUnsetBoolsNull(t *testing.T) {
+	ctx := context.Background()
+
+	read := func(prior ApprovalWorkflowSettingsResourceModel) ApprovalWorkflowSettingsResourceModel {
+		t.Helper()
+		r := &ApprovalWorkflowSettingsResource{client: &fakeApprovalWorkflowClient{
+			settings: []*apipb.ApprovalWorkflowSettings{
+				apipb.ApprovalWorkflowSettings_builder{
+					Tag:              "dev",
+					ApprovalRuleType: apipb.RuleType_CDHASH,
+					DesignatedApprover: apipb.DesignatedApproverWorkflowSettings_builder{
+						Tag: apipb.DesignatedApproverTag_builder{Tag: "security", Threshold: 2}.Build(),
+						// Both booleans unset, so the server reports false.
+					}.Build(),
+				}.Build(),
+			},
+		}}
+
+		var sResp resource.SchemaResponse
+		r.Schema(ctx, resource.SchemaRequest{}, &sResp)
+		var iResp resource.IdentitySchemaResponse
+		r.IdentitySchema(ctx, resource.IdentitySchemaRequest{}, &iResp)
+
+		req := resource.ReadRequest{State: tfsdk.State{Schema: sResp.Schema}}
+		if diags := req.State.Set(ctx, prior); diags.HasError() {
+			t.Fatalf("building state: %v", diags)
+		}
+		resp := &resource.ReadResponse{
+			State:    tfsdk.State{Schema: sResp.Schema},
+			Identity: &tfsdk.ResourceIdentity{Schema: iResp.IdentitySchema},
+		}
+		r.Read(ctx, req, resp)
+		if resp.Diagnostics.HasError() {
+			t.Fatalf("read: %v", resp.Diagnostics)
+		}
+		var got ApprovalWorkflowSettingsResourceModel
+		if diags := resp.State.Get(ctx, &got); diags.HasError() {
+			t.Fatalf("reading state: %v", diags)
+		}
+		return got
+	}
+
+	prior := func(allowTagApproval types.Bool) ApprovalWorkflowSettingsResourceModel {
+		return ApprovalWorkflowSettingsResourceModel{
+			Tag:                types.StringValue("dev"),
+			ApprovalRuleType:   types.StringValue("CDHASH"),
+			NotificationMethod: types.StringNull(),
+			DesignatedApprover: &ApprovalWorkflowDesignatedApproverModel{
+				ApproverTag:      types.StringValue("security"),
+				ApproverEmails:   types.ListNull(types.StringType),
+				Threshold:        types.Int64Value(2),
+				AllowTagApproval: allowTagApproval,
+			},
+		}
+	}
+
+	got := read(prior(types.BoolNull()))
+	if !got.DesignatedApprover.AllowTagApproval.IsNull() {
+		t.Errorf("allow_tag_approval = %v, want null when the configuration never set it",
+			got.DesignatedApprover.AllowTagApproval)
+	}
+	if !got.DesignatedApprover.RequireJustification.IsNull() {
+		t.Errorf("require_justification = %v, want null when the configuration never set it",
+			got.DesignatedApprover.RequireJustification)
+	}
+
+	// An explicit false is a real configured value and must survive as false.
+	got = read(prior(types.BoolValue(false)))
+	if got.DesignatedApprover.AllowTagApproval.IsNull() || got.DesignatedApprover.AllowTagApproval.ValueBool() {
+		t.Errorf("allow_tag_approval = %v, want an explicit false", got.DesignatedApprover.AllowTagApproval)
+	}
+}
