@@ -657,7 +657,7 @@ func approvalWorkflowProtoToModel(ctx context.Context, prior *ApprovalWorkflowSe
 		sv := s.GetSocialVoting()
 		priorSV := prior.SocialVoting
 		if priorSV == nil {
-			priorSV = &ApprovalWorkflowSocialVotingModel{}
+			priorSV = &ApprovalWorkflowSocialVotingModel{TagsToConsiderVotesFrom: types.ListNull(types.StringType)}
 		}
 		out.SocialVoting = &ApprovalWorkflowSocialVotingModel{
 			LocalThreshold:          types.Int64Value(int64(sv.GetLocalThreshold())),
@@ -670,12 +670,18 @@ func approvalWorkflowProtoToModel(ctx context.Context, prior *ApprovalWorkflowSe
 	return out
 }
 
-// voteTagsToTF keeps tags_to_consider_votes_from null when the configuration
-// left it unset and the server filled in its default (the workflow's own tag),
-// which would otherwise show up as a diff on every plan.
+// voteTagsToTF keeps tags_to_consider_votes_from as the configuration wrote it
+// whenever the configuration named no tags at all. The server replaces an
+// unset or empty list with the workflow's own tag, so reading that default
+// back would diff against the configuration on every plan.
 func voteTagsToTF(ctx context.Context, tags []string, workflowTag string, prior types.List, diags *diag.Diagnostics) types.List {
-	if len(tags) == 0 || (prior.IsNull() && len(tags) == 1 && tags[0] == workflowTag) {
-		return types.ListNull(types.StringType)
+	namedNone := prior.IsNull() || len(prior.Elements()) == 0
+	if len(tags) == 0 || (namedNone && len(tags) == 1 && tags[0] == workflowTag) {
+		if prior.IsNull() {
+			return types.ListNull(types.StringType)
+		}
+		// An explicitly empty list, which is already correctly typed.
+		return prior
 	}
 	list, d := types.ListValueFrom(ctx, types.StringType, tags)
 	diags.Append(d...)

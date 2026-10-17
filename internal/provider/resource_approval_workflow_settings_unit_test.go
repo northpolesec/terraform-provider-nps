@@ -48,6 +48,10 @@ func (c *fakeApprovalWorkflowClient) DeleteApprovalWorkflowSettings(ctx context.
 
 func stringList(t *testing.T, values ...string) types.List {
 	t.Helper()
+	if values == nil {
+		// A nil slice converts to a null list, not an empty one.
+		values = []string{}
+	}
 	list, diags := types.ListValueFrom(context.Background(), types.StringType, values)
 	if diags.HasError() {
 		t.Fatalf("building list: %v", diags)
@@ -491,6 +495,20 @@ func TestApprovalWorkflowReadKeepsDefaultedVoteTagsNull(t *testing.T) {
 	}
 	if !got.NotificationMethod.IsNull() {
 		t.Errorf("notification_method = %v, want null when the server reports UNSPECIFIED", got.NotificationMethod)
+	}
+
+	// An explicitly empty list asks for the same default, so it must survive
+	// as an empty list rather than becoming the tag the server filled in.
+	empty := prior
+	empty.SocialVoting = &ApprovalWorkflowSocialVotingModel{
+		LocalThreshold:          types.Int64Value(2),
+		TagThreshold:            types.Int64Value(5),
+		TagsToConsiderVotesFrom: stringList(t),
+	}
+	got = read(empty, []string{"dev"})
+	if got.SocialVoting.TagsToConsiderVotesFrom.IsNull() || len(got.SocialVoting.TagsToConsiderVotesFrom.Elements()) != 0 {
+		t.Errorf("tags_to_consider_votes_from = %v, want the configured empty list",
+			got.SocialVoting.TagsToConsiderVotesFrom)
 	}
 
 	// A tag the configuration did not set is real drift and must surface.
