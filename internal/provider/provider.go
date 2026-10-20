@@ -162,6 +162,7 @@ func (p *NPSProvider) Resources(ctx context.Context) []func() resource.Resource 
 	return []func() resource.Resource{
 		NewAPIKeyResource,
 		NewAPIKeyCIDRSettingsResource,
+		NewApprovalWorkflowSettingsResource,
 		NewAutoUpdateSettingsResource,
 		NewChatSettingsResource,
 		NewDirectorySettingsResource,
