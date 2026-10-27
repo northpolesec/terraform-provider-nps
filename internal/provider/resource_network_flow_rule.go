@@ -172,10 +172,11 @@ func (r *NetworkFlowRuleResource) Schema(ctx context.Context, req resource.Schem
 				},
 				// Workshop does not let a rule change its kind. State written
 				// before this attribute existed is null; that rule is a
-				// CONNECTION rule, so null must not force a replacement.
+				// CONNECTION rule, so null to CONNECTION must not force a
+				// replacement.
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplaceIf(func(ctx context.Context, req planmodifier.StringRequest, resp *stringplanmodifier.RequiresReplaceIfFuncResponse) {
-						resp.RequiresReplace = !req.StateValue.IsNull()
+						resp.RequiresReplace = !req.StateValue.IsNull() || req.PlanValue.ValueString() != "CONNECTION"
 					}, "Changing kind replaces the rule.", "Changing `kind` replaces the rule."),
 				},
 			},
