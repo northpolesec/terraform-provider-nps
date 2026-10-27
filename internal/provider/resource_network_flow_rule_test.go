@@ -4,12 +4,14 @@ package provider
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	frameworkresource "github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
+	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -53,6 +55,8 @@ func testNetworkFlowRuleDeleteModel() NetworkFlowRuleResourceModel {
 		Name:              types.StringValue("test-rule"),
 		Action:            types.StringValue("DENY"),
 		Direction:         types.StringValue("OUTGOING"),
+		Kind:              types.StringValue("CONNECTION"),
+		DnsResponse:       types.StringNull(),
 		Priority:          types.BoolNull(),
 		Rank:              types.Int64Null(),
 		ProcessCdHashes:   types.ListNull(types.StringType),
@@ -111,6 +115,93 @@ func TestAccNetworkFlowRule(t *testing.T) {
 			// Delete testing automatically occurs in TestCase
 		},
 	})
+}
+
+func TestAccNetworkFlowRuleDNS(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck: func() {
+			testAccPreCheck(t)
+		},
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccNetworkFlowRuleDNSResourceConfig("DNSRule1", "global"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("nps_workshop_network_flow_rule.dns", "kind", "DNS"),
+					resource.TestCheckResourceAttr("nps_workshop_network_flow_rule.dns", "direction", "ANY"),
+					resource.TestCheckResourceAttr("nps_workshop_network_flow_rule.dns", "dns_response", "NODATA"),
+					resource.TestCheckResourceAttr("nps_workshop_network_flow_rule.dns", "remote_domains.0", "example.com"),
+				),
+			},
+			{
+				ResourceName:      "nps_workshop_network_flow_rule.dns",
+				ImportState:       true,
+				ImportStateVerify: true,
+			},
+			// kind changes in place: Workshop supersedes the (tag, name) rule
+			// atomically, so there is no destroy and no window without a rule.
+			{
+				Config: testAccNetworkFlowRuleKindChangeConfig("CONNECTION"),
+				Check:  resource.TestCheckResourceAttr("nps_workshop_network_flow_rule.dns", "kind", "CONNECTION"),
+			},
+			{
+				Config: testAccNetworkFlowRuleKindChangeConfig("DNS"),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("nps_workshop_network_flow_rule.dns", plancheck.ResourceActionUpdate),
+					},
+				},
+				Check: resource.TestCheckResourceAttr("nps_workshop_network_flow_rule.dns", "kind", "DNS"),
+			},
+			// Unset dns_response: Workshop stores NXDOMAIN, which must read
+			// back as unset (the post-apply empty-plan check catches a diff).
+			{
+				Config: strings.Replace(testAccNetworkFlowRuleDNSResourceConfig("DNSRule1", "global"), `dns_response = "NODATA"`, "", 1),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckNoResourceAttr("nps_workshop_network_flow_rule.dns", "dns_response"),
+				),
+			},
+		},
+	})
+}
+
+func testAccNetworkFlowRuleDNSResourceConfig(name string, tag string) string {
+	return fmt.Sprintf(`
+provider "nps" {
+  endpoint = "localhost:8080"
+}
+
+resource "nps_workshop_network_flow_rule" "dns" {
+  name         = %[1]q
+  tag          = %[2]q
+  kind         = "DNS"
+  action       = "DENY"
+  dns_response = "NODATA"
+
+  remote_domains = [
+    "example.com",
+  ]
+}
+`, name, tag)
+}
+
+func testAccNetworkFlowRuleKindChangeConfig(kind string) string {
+	return fmt.Sprintf(`
+provider "nps" {
+  endpoint = "localhost:8080"
+}
+
+resource "nps_workshop_network_flow_rule" "dns" {
+  name   = "DNSRule1"
+  tag    = "global"
+  kind   = %q
+  action = "DENY"
+
+  remote_domains = [
+    "example.com",
+  ]
+}
+`, kind)
 }
 
 func testAccNetworkFlowRuleResourceConfig(name string, tag string) string {
