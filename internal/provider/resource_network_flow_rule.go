@@ -18,6 +18,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/identityschema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -40,10 +41,13 @@ var _ list.ListResourceWithConfigure = &NetworkFlowRuleResource{}
 
 // nfActionPrefix and nfDirectionPrefix are stripped from the action and
 // direction enum values in HCL; the prefixed spellings are deprecated
-// aliases during a compatibility window.
+// aliases during a compatibility window. kind and dns_response only ever
+// accepted the bare spellings.
 const (
-	nfActionPrefix    = "NETWORK_FLOW_RULE_ACTION_"
-	nfDirectionPrefix = "NETWORK_FLOW_DIRECTION_"
+	nfActionPrefix      = "NETWORK_FLOW_RULE_ACTION_"
+	nfDirectionPrefix   = "NETWORK_FLOW_DIRECTION_"
+	nfKindPrefix        = "NETWORK_FLOW_RULE_KIND_"
+	nfDNSResponsePrefix = "NETWORK_FLOW_RULE_DNS_RESPONSE_"
 )
 
 func NewNetworkFlowRuleResource() resource.Resource {
@@ -62,10 +66,12 @@ type NetworkFlowRuleIdentityModel struct {
 
 // NetworkFlowRuleResourceModel describes the resource data model.
 type NetworkFlowRuleResourceModel struct {
-	Tag       types.String `tfsdk:"tag"`
-	Name      types.String `tfsdk:"name"`
-	Action    types.String `tfsdk:"action"`
-	Direction types.String `tfsdk:"direction"`
+	Tag         types.String `tfsdk:"tag"`
+	Name        types.String `tfsdk:"name"`
+	Action      types.String `tfsdk:"action"`
+	Direction   types.String `tfsdk:"direction"`
+	Kind        types.String `tfsdk:"kind"`
+	DnsResponse types.String `tfsdk:"dns_response"`
 
 	// precedence_hint oneof. At most one may be set.
 	Priority types.Bool  `tfsdk:"priority"`
@@ -142,15 +148,35 @@ func (r *NetworkFlowRuleResource) Schema(ctx context.Context, req resource.Schem
 				},
 			},
 			"direction": schema.StringAttribute{
-				Description:         "The direction of network flows this rule applies to, relative to the host. The possible values are: ANY, OUTGOING, and INCOMING. The NETWORK_FLOW_DIRECTION_-prefixed spellings are deprecated aliases accepted for backwards compatibility.",
-				MarkdownDescription: "The direction of network flows this rule applies to, relative to the host. The possible values are: `ANY`, `OUTGOING`, and `INCOMING`. The `NETWORK_FLOW_DIRECTION_`-prefixed spellings are deprecated aliases accepted for backwards compatibility.",
-				Required:            true,
+				Description:         "The direction of network flows this rule applies to, relative to the host. The possible values are: ANY, OUTGOING, and INCOMING. Defaults to ANY. DNS rules always apply in every direction. The NETWORK_FLOW_DIRECTION_-prefixed spellings are deprecated aliases accepted for backwards compatibility.",
+				MarkdownDescription: "The direction of network flows this rule applies to, relative to the host. The possible values are: `ANY`, `OUTGOING`, and `INCOMING`. Defaults to `ANY`. DNS rules always apply in every direction. The `NETWORK_FLOW_DIRECTION_`-prefixed spellings are deprecated aliases accepted for backwards compatibility.",
+				Optional:            true,
+				Computed:            true,
+				Default:             stringdefault.StaticString("ANY"),
 				Validators: []validator.String{
 					stringvalidator.OneOf(utils.ProtoEnumAcceptedValues(apipb.NetworkFlowDirection(0).Descriptor(), nfDirectionPrefix)...),
 				},
 				// Suppresses spelling-only diffs between the bare and prefixed forms.
 				PlanModifiers: []planmodifier.String{
 					enumForm(nfDirectionPrefix),
+				},
+			},
+			"kind": schema.StringAttribute{
+				Description:         "What this rule matches. The possible values are: CONNECTION (network flows) and DNS (DNS lookups). Defaults to CONNECTION. A DNS rule matches remote_hostnames exactly and remote_domains as suffixes, and must not set process matchers, remote_addresses, ports, or protocols. Changing kind updates the rule in place. DNS rules require Workshop 2026.9 or later.",
+				MarkdownDescription: "What this rule matches. The possible values are: `CONNECTION` (network flows) and `DNS` (DNS lookups). Defaults to `CONNECTION`. A `DNS` rule matches `remote_hostnames` exactly and `remote_domains` as suffixes, and must not set process matchers, `remote_addresses`, `ports`, or `protocols`. Changing `kind` updates the rule in place. DNS rules require Workshop 2026.9 or later.",
+				Optional:            true,
+				Computed:            true,
+				Default:             stringdefault.StaticString("CONNECTION"),
+				Validators: []validator.String{
+					stringvalidator.OneOf(utils.ProtoEnumShortValues(apipb.NetworkFlowRuleKind(0).Descriptor(), nfKindPrefix)...),
+				},
+			},
+			"dns_response": schema.StringAttribute{
+				Description:         "The reply a DNS rule with action DENY or SILENT_DENY sends for a blocked lookup. The possible values are: NXDOMAIN and NODATA. Workshop uses NXDOMAIN when this is unset. Valid only on DNS rules with action DENY or SILENT_DENY.",
+				MarkdownDescription: "The reply a `DNS` rule with action `DENY` or `SILENT_DENY` sends for a blocked lookup. The possible values are: `NXDOMAIN` and `NODATA`. Workshop uses `NXDOMAIN` when this is unset. Valid only on `DNS` rules with action `DENY` or `SILENT_DENY`.",
+				Optional:            true,
+				Validators: []validator.String{
+					stringvalidator.OneOf(utils.ProtoEnumShortValues(apipb.NetworkFlowRuleDNSResponse(0).Descriptor(), nfDNSResponsePrefix)...),
 				},
 			},
 			"priority": schema.BoolAttribute{
@@ -369,6 +395,8 @@ func (r *NetworkFlowRuleResource) Read(ctx context.Context, req resource.ReadReq
 	data.Name = types.StringValue(rule.GetName())
 	data.Action = types.StringValue(utils.MatchEnumForm(data.Action.ValueString(), rule.GetAction().String(), nfActionPrefix))
 	data.Direction = types.StringValue(utils.MatchEnumForm(data.Direction.ValueString(), rule.GetDirection().String(), nfDirectionPrefix))
+	data.Kind = networkFlowRuleKind(rule.GetKind())
+	data.DnsResponse = dnsResponse(data.DnsResponse, rule.GetDnsResponse())
 
 	// precedence_hint oneof: only one arm is ever set.
 	data.Priority = types.BoolNull()
@@ -438,15 +466,19 @@ func (r *NetworkFlowRuleResource) Read(ctx context.Context, req resource.ReadReq
 func buildNetworkFlowRule(ctx context.Context, data NetworkFlowRuleResourceModel, diags *diag.Diagnostics) *apipb.NetworkFlowRule {
 	action := apipb.NetworkFlowRuleAction(apipb.NetworkFlowRuleAction_value[utils.NormalizeEnum(data.Action.ValueString(), nfActionPrefix)])
 	direction := apipb.NetworkFlowDirection(apipb.NetworkFlowDirection_value[utils.NormalizeEnum(data.Direction.ValueString(), nfDirectionPrefix)])
+	kind := apipb.NetworkFlowRuleKind(apipb.NetworkFlowRuleKind_value[utils.NormalizeEnum(data.Kind.ValueString(), nfKindPrefix)])
+	dnsResponse := apipb.NetworkFlowRuleDNSResponse(apipb.NetworkFlowRuleDNSResponse_value[utils.NormalizeEnum(data.DnsResponse.ValueString(), nfDNSResponsePrefix)])
 
 	builder := apipb.NetworkFlowRule_builder{
-		Tag:       data.Tag.ValueString(),
-		Name:      data.Name.ValueString(),
-		Action:    action,
-		Direction: direction,
-		CustomMsg: data.CustomMsg.ValueString(),
-		CustomUrl: data.CustomUrl.ValueString(),
-		Comment:   data.Comment.ValueString(),
+		Tag:         data.Tag.ValueString(),
+		Name:        data.Name.ValueString(),
+		Action:      action,
+		Direction:   direction,
+		Kind:        kind,
+		DnsResponse: dnsResponse,
+		CustomMsg:   data.CustomMsg.ValueString(),
+		CustomUrl:   data.CustomUrl.ValueString(),
+		Comment:     data.Comment.ValueString(),
 	}
 
 	// precedence_hint oneof: set at most one arm.
@@ -486,6 +518,27 @@ func buildNetworkFlowRule(ctx context.Context, data NetworkFlowRuleResourceModel
 	}
 
 	return builder.Build()
+}
+
+// networkFlowRuleKind maps the server's kind onto the model. Workshop stores
+// UNSPECIFIED as CONNECTION.
+func networkFlowRuleKind(k apipb.NetworkFlowRuleKind) types.String {
+	if k == apipb.NetworkFlowRuleKind_NETWORK_FLOW_RULE_KIND_UNSPECIFIED {
+		k = apipb.NetworkFlowRuleKind_NETWORK_FLOW_RULE_KIND_CONNECTION
+	}
+	return types.StringValue(utils.ShortEnum(k.String(), nfKindPrefix))
+}
+
+// dnsResponse maps the server's dns_response onto the model. Workshop stores
+// NXDOMAIN when a denying DNS rule leaves it unset, so a null prior stays null
+// for NXDOMAIN; forcing the stored value over an unset config is a perpetual
+// diff.
+func dnsResponse(prior types.String, r apipb.NetworkFlowRuleDNSResponse) types.String {
+	if r == apipb.NetworkFlowRuleDNSResponse_NETWORK_FLOW_RULE_DNS_RESPONSE_UNSPECIFIED ||
+		(prior.IsNull() && r == apipb.NetworkFlowRuleDNSResponse_NETWORK_FLOW_RULE_DNS_RESPONSE_NXDOMAIN) {
+		return types.StringNull()
+	}
+	return types.StringValue(utils.ShortEnum(r.String(), nfDNSResponsePrefix))
 }
 
 // portRangeHigh maps the server's high bound back onto the model. The proto
@@ -645,6 +698,8 @@ func (r *NetworkFlowRuleResource) List(ctx context.Context, req list.ListRequest
 					Name:              types.StringValue(rule.GetName()),
 					Action:            types.StringValue(utils.ShortEnum(rule.GetAction().String(), nfActionPrefix)),
 					Direction:         types.StringValue(utils.ShortEnum(rule.GetDirection().String(), nfDirectionPrefix)),
+					Kind:              networkFlowRuleKind(rule.GetKind()),
+					DnsResponse:       dnsResponse(types.StringNull(), rule.GetDnsResponse()),
 					Priority:          types.BoolNull(),
 					Rank:              types.Int64Null(),
 					ProcessCdHashes:   toListOrNull(rule.GetProcessCdHashes()),
