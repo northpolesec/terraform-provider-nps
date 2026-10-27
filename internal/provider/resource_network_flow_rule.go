@@ -162,22 +162,13 @@ func (r *NetworkFlowRuleResource) Schema(ctx context.Context, req resource.Schem
 				},
 			},
 			"kind": schema.StringAttribute{
-				Description:         "What this rule matches. The possible values are: CONNECTION (network flows) and DNS (DNS lookups). Defaults to CONNECTION. A DNS rule matches remote_hostnames exactly and remote_domains as suffixes, and must not set process matchers, remote_addresses, ports, or protocols. Changing kind replaces the rule. DNS rules require Workshop 2026.9 or later.",
-				MarkdownDescription: "What this rule matches. The possible values are: `CONNECTION` (network flows) and `DNS` (DNS lookups). Defaults to `CONNECTION`. A `DNS` rule matches `remote_hostnames` exactly and `remote_domains` as suffixes, and must not set process matchers, `remote_addresses`, `ports`, or `protocols`. Changing `kind` replaces the rule. DNS rules require Workshop 2026.9 or later.",
+				Description:         "What this rule matches. The possible values are: CONNECTION (network flows) and DNS (DNS lookups). Defaults to CONNECTION. A DNS rule matches remote_hostnames exactly and remote_domains as suffixes, and must not set process matchers, remote_addresses, ports, or protocols. Changing kind updates the rule in place. DNS rules require Workshop 2026.9 or later.",
+				MarkdownDescription: "What this rule matches. The possible values are: `CONNECTION` (network flows) and `DNS` (DNS lookups). Defaults to `CONNECTION`. A `DNS` rule matches `remote_hostnames` exactly and `remote_domains` as suffixes, and must not set process matchers, `remote_addresses`, `ports`, or `protocols`. Changing `kind` updates the rule in place. DNS rules require Workshop 2026.9 or later.",
 				Optional:            true,
 				Computed:            true,
 				Default:             stringdefault.StaticString("CONNECTION"),
 				Validators: []validator.String{
 					stringvalidator.OneOf(utils.ProtoEnumShortValues(apipb.NetworkFlowRuleKind(0).Descriptor(), nfKindPrefix)...),
-				},
-				// Workshop does not let a rule change its kind. State written
-				// before this attribute existed is null; that rule is a
-				// CONNECTION rule, so null to CONNECTION must not force a
-				// replacement.
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplaceIf(func(ctx context.Context, req planmodifier.StringRequest, resp *stringplanmodifier.RequiresReplaceIfFuncResponse) {
-						resp.RequiresReplace = !req.StateValue.IsNull() || req.PlanValue.ValueString() != "CONNECTION"
-					}, "Changing kind replaces the rule.", "Changing `kind` replaces the rule."),
 				},
 			},
 			"dns_response": schema.StringAttribute{

@@ -11,6 +11,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
+	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -137,6 +138,21 @@ func TestAccNetworkFlowRuleDNS(t *testing.T) {
 				ImportState:       true,
 				ImportStateVerify: true,
 			},
+			// kind changes in place: Workshop supersedes the (tag, name) rule
+			// atomically, so there is no destroy and no window without a rule.
+			{
+				Config: testAccNetworkFlowRuleKindChangeConfig("CONNECTION"),
+				Check:  resource.TestCheckResourceAttr("nps_workshop_network_flow_rule.dns", "kind", "CONNECTION"),
+			},
+			{
+				Config: testAccNetworkFlowRuleKindChangeConfig("DNS"),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("nps_workshop_network_flow_rule.dns", plancheck.ResourceActionUpdate),
+					},
+				},
+				Check: resource.TestCheckResourceAttr("nps_workshop_network_flow_rule.dns", "kind", "DNS"),
+			},
 			// Unset dns_response: Workshop stores NXDOMAIN, which must read
 			// back as unset (the post-apply empty-plan check catches a diff).
 			{
@@ -167,6 +183,25 @@ resource "nps_workshop_network_flow_rule" "dns" {
   ]
 }
 `, name, tag)
+}
+
+func testAccNetworkFlowRuleKindChangeConfig(kind string) string {
+	return fmt.Sprintf(`
+provider "nps" {
+  endpoint = "localhost:8080"
+}
+
+resource "nps_workshop_network_flow_rule" "dns" {
+  name   = "DNSRule1"
+  tag    = "global"
+  kind   = %q
+  action = "DENY"
+
+  remote_domains = [
+    "example.com",
+  ]
+}
+`, kind)
 }
 
 func testAccNetworkFlowRuleResourceConfig(name string, tag string) string {
