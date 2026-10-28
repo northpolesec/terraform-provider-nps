@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"regexp"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
@@ -120,12 +119,6 @@ var (
 		"BLOCK_MOUNT_DISABLED",
 	}
 	syncSettingsRemovableActionValues = []string{"ALLOW", "BLOCK", "REMOUNT"}
-
-	// syncSettingsTagRegex mirrors the server-side tag validation
-	// (letters, digits, '.', ':', '-', '_'). Enforcing it here gives early
-	// feedback and ensures the tag cannot break out of the ListSyncSettings /
-	// ListTelemetryConfigs filter string it is interpolated into.
-	syncSettingsTagRegex = regexp.MustCompile(`^[\p{L}\p{N}.:_-]+$`)
 )
 
 // networkFlowDefaultActionPrefix is stripped from NetworkFlowDefaultAction
@@ -155,9 +148,9 @@ func (r *SyncSettingsResource) Schema(ctx context.Context, req resource.SchemaRe
 					stringplanmodifier.RequiresReplace(),
 				},
 				Validators: []validator.String{
-					stringvalidator.LengthBetween(1, 42),
+					stringvalidator.LengthBetween(1, tagNameMaxLen),
 					stringvalidator.RegexMatches(
-						syncSettingsTagRegex,
+						tagNameRegex,
 						"must contain only letters, digits, periods, colons, hyphens, and underscores",
 					),
 				},
@@ -758,14 +751,14 @@ func (r *SyncSettingsResource) ImportState(ctx context.Context, req resource.Imp
 	// Validate up front so we fail with a clear message instead of writing an
 	// invalid tag into state and erroring later at Read time when the value is
 	// interpolated into the ListSyncSettings filter.
-	if l := len(req.ID); l < 1 || l > 42 {
+	if l := len(req.ID); l < 1 || l > tagNameMaxLen {
 		resp.Diagnostics.AddError(
 			"Invalid import ID",
-			fmt.Sprintf("tag %q must be between 1 and 42 characters, got %d", req.ID, l),
+			fmt.Sprintf("tag %q must be between 1 and %d characters, got %d", req.ID, tagNameMaxLen, l),
 		)
 		return
 	}
-	if !syncSettingsTagRegex.MatchString(req.ID) {
+	if !tagNameRegex.MatchString(req.ID) {
 		resp.Diagnostics.AddError(
 			"Invalid import ID",
 			fmt.Sprintf("tag %q must contain only letters, digits, periods, colons, hyphens, and underscores", req.ID),
