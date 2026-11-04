@@ -6,10 +6,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/user"
 	"path/filepath"
+	"strconv"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
@@ -99,11 +101,23 @@ func APIKeyOrToken(ctx context.Context, inputKey, serverURL string) (credentials
 	return nil, fmt.Errorf("Not logged in. Run the following to login:\n\n\t%s -login %s", os.Args[0], serverURL)
 }
 
+// IsLocalhostEndpoint reports whether endpoint is a localhost address with a
+// valid port (e.g. "localhost:8080"). It fails closed so lookalikes such as
+// "localhost:@evil.com" are rejected and secure defaults are preserved.
+func IsLocalhostEndpoint(endpoint string) bool {
+	host, port, err := net.SplitHostPort(endpoint)
+	if err != nil || host != "localhost" {
+		return false
+	}
+	p, err := strconv.Atoi(port)
+	return err == nil && p >= 1 && p <= 65535
+}
+
 func createConfig(_ context.Context, endpoint string) (*oauth2.Config, bool, error) {
 	insecure := false
-	if endpoint == "localhost:8080" {
+	if IsLocalhostEndpoint(endpoint) {
 		insecure = true
-		endpoint = "http://localhost:8080/.well-known/workos-client-id"
+		endpoint = fmt.Sprintf("http://%s/.well-known/workos-client-id", endpoint)
 	} else {
 		endpoint = fmt.Sprintf("https://%s/.well-known/workos-client-id", endpoint)
 	}
