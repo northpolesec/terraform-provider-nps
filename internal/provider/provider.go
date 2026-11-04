@@ -8,7 +8,6 @@ import (
 	"crypto/tls"
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
@@ -135,7 +134,7 @@ func (p *NPSProvider) Configure(ctx context.Context, req provider.ConfigureReque
 
 	// If the endpoint is localhost, allow an insecure connection.
 	// Otherwise ensure TLS is used.
-	if strings.HasPrefix(endpoint, "localhost:") {
+	if auth.IsLocalhostEndpoint(endpoint) {
 		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	} else {
 		opts = append(opts, grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{})))
