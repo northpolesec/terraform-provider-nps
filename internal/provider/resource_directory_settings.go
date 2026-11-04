@@ -188,7 +188,13 @@ func (r *DirectorySettingsResource) Read(ctx context.Context, req resource.ReadR
 		return
 	}
 
-	data.DirectoryType = types.StringValue(ret.GetType().String())
+	// A tenant with no stored directory type reports DIRECTORY_TYPE_UNSPECIFIED,
+	// which is not valid configuration: writing it would leave state that the
+	// schema's own OneOf validator rejects on the next plan. Keep the prior
+	// value instead.
+	if ret.GetType() != apipb.DirectoryType_DIRECTORY_TYPE_UNSPECIFIED {
+		data.DirectoryType = types.StringValue(ret.GetType().String())
+	}
 	data.DirectorySyncGroupFilter = groupsProtoToModel(ctx, ret.GetDirectorySyncGroupFilter(), &resp.Diagnostics)
 
 	resp.Diagnostics.Append(resp.Identity.Set(ctx, DirectorySettingsIdentityModel{Id: types.StringValue("directory_settings")})...)
@@ -235,10 +241,12 @@ func (r *DirectorySettingsResource) Delete(ctx context.Context, req resource.Del
 
 func (r *DirectorySettingsResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	// Singleton: any ID is accepted, Read will fetch current state.
-	// We just need to set some initial state so Read can proceed.
-	// Set directory_type to a placeholder; Read will overwrite it.
+	// We just need to set some initial state so Read can proceed. The
+	// placeholder has to satisfy the schema's OneOf validator on
+	// directory_type, since Read leaves it in place for a tenant whose
+	// directory type is unset.
 	resp.Diagnostics.Append(resp.State.Set(ctx, &DirectorySettingsResourceModel{
-		DirectoryType:            types.StringValue("DIRECTORY_TYPE_UNSPECIFIED"),
+		DirectoryType:            types.StringValue("DIRECTORY_TYPE_LOCAL"),
 		DirectorySyncGroupFilter: types.ListValueMust(groupFilterObjectType, []attr.Value{}),
 	})...)
 }

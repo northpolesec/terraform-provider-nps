@@ -13,5 +13,15 @@ resource "nps_workshop_file_access_rule" "ChromeCookies" {
   process_signing_ids = [
     "EQHXZ8M8AV:com.google.Chrome*"
   ]
-}
 
+  # Chrome is one of the allowed processes above, but audit its access rather
+  # than allowing it silently. Every attribute left out of an override entry
+  # inherits the rule's own value.
+  process_overrides = [
+    {
+      type   = "SIGNING_ID"
+      value  = "EQHXZ8M8AV:com.google.Chrome*"
+      action = "AUDIT"
+    },
+  ]
+}

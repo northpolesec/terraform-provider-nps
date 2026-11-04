@@ -4,6 +4,7 @@ package provider
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -338,5 +339,28 @@ func TestUpsertPackageRuleUpsertsAndNeverDeletes(t *testing.T) {
 	}
 	if fake.deleteCalls != 0 {
 		t.Errorf("Update must not delete; got %d delete calls", fake.deleteCalls)
+	}
+}
+
+// TestRulePolicyValidValuesExcludesRemove checks REMOVE is not offered as a
+// policy. It marks an existing rule for deletion during rule download rather
+// than describing a rule's own state, so declaring one is meaningless:
+// deleting the resource is how Terraform removes a rule.
+func TestRulePolicyValidValuesExcludesRemove(t *testing.T) {
+	for name, got := range map[string][]string{
+		"rulePolicyValidValues":       rulePolicyValidValues(),
+		"packagePolicyAcceptedValues": packagePolicyAcceptedValues(),
+	} {
+		if slices.Contains(got, "REMOVE") {
+			t.Errorf("%s contains REMOVE: %v", name, got)
+		}
+		for _, want := range []string{"ALLOWLIST", "BLOCKLIST", "CEL"} {
+			if !slices.Contains(got, want) {
+				t.Errorf("%s missing %q: %v", name, want, got)
+			}
+		}
+	}
+	if !slices.Contains(rulePolicyValidValues(), "SEATBELT") {
+		t.Error("rulePolicyValidValues should still offer SEATBELT")
 	}
 }

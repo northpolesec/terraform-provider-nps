@@ -7,10 +7,15 @@ import (
 	"math"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/identityschema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
@@ -57,25 +62,41 @@ func (r *MPASettingsResource) Schema(ctx context.Context, req resource.SchemaReq
 				Description:         "Whether multi-party approval is enabled for sensitive actions.",
 				MarkdownDescription: "Whether multi-party approval is enabled for sensitive actions.",
 				Optional:            true,
+				Computed:            true,
+				PlanModifiers: []planmodifier.Bool{
+					boolplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"max_duration": schema.StringAttribute{
 				Description:         "Maximum duration an approval request remains pending before it expires. Go duration string (e.g. \"30m\", \"24h\").",
 				MarkdownDescription: "Maximum duration an approval request remains pending before it expires. Go duration string (e.g. `\"30m\"`, `\"24h\"`).",
 				Optional:            true,
+				Computed:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"required_approvers": schema.Int64Attribute{
 				Description:         "Number of workshop-admin approvals required before executing an action. The requestor cannot approve their own request.",
 				MarkdownDescription: "Number of workshop-admin approvals required before executing an action. The requestor cannot approve their own request.",
 				Optional:            true,
+				Computed:            true,
 				Validators: []validator.Int64{
 					// Restrict to uint32 range so tfInt64ToUint32Ptr cannot wrap.
 					int64validator.Between(0, int64(math.MaxUint32)),
+				},
+				PlanModifiers: []planmodifier.Int64{
+					int64planmodifier.UseStateForUnknown(),
 				},
 			},
 			"exclude_api_keys": schema.BoolAttribute{
 				Description:         "If true, API key requests bypass MPA and execute immediately.",
 				MarkdownDescription: "If true, API key requests bypass MPA and execute immediately.",
 				Optional:            true,
+				Computed:            true,
+				PlanModifiers: []planmodifier.Bool{
+					boolplanmodifier.UseStateForUnknown(),
+				},
 			},
 		},
 	}
@@ -95,6 +116,20 @@ func (r *MPASettingsResource) Configure(ctx context.Context, req resource.Config
 		return
 	}
 	r.client = pd.Client
+}
+
+// fetchMPASettings reads the current server-side settings so authoritative
+// values can be written to Terraform state after a Create or Update. Required
+// because the schema attributes are Optional+Computed: an attribute the user
+// leaves out of config must mirror the server value rather than the plan's
+// null, which the presence-sensitive Set RPC never applied.
+func (r *MPASettingsResource) fetchMPASettings(ctx context.Context, diags *diag.Diagnostics) (MPASettingsResourceModel, bool) {
+	ret, err := r.client.GetMultipartyApprovalSettings(ctx, apipb.GetMultipartyApprovalSettingsRequest_builder{}.Build())
+	if err != nil {
+		diags.AddError("Client Error", fmt.Sprintf("Failed to get MPA settings: %v", err))
+		return MPASettingsResourceModel{}, false
+	}
+	return mpaProtoToModel(ret.GetSettings()), true
 }
 
 func (r *MPASettingsResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
@@ -129,20 +164,23 @@ func (r *MPASettingsResource) Create(ctx context.Context, req resource.CreateReq
 		return
 	}
 
-	tflog.Info(ctx, "Created MPA settings resource")
-
-	resp.Diagnostics.Append(resp.Identity.Set(ctx, MPASettingsIdentityModel{Id: types.StringValue("mpa_settings")})...)
-	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
-}
-
-func (r *MPASettingsResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
-	ret, err := r.client.GetMultipartyApprovalSettings(ctx, apipb.GetMultipartyApprovalSettingsRequest_builder{}.Build())
-	if err != nil {
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Failed to get MPA settings: %v", err))
+	final, ok := r.fetchMPASettings(ctx, &resp.Diagnostics)
+	if !ok {
 		return
 	}
 
-	data := mpaProtoToModel(ret.GetSettings())
+	tflog.Info(ctx, "Created MPA settings resource")
+
+	resp.Diagnostics.Append(resp.Identity.Set(ctx, MPASettingsIdentityModel{Id: types.StringValue("mpa_settings")})...)
+	resp.Diagnostics.Append(resp.State.Set(ctx, &final)...)
+}
+
+func (r *MPASettingsResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
+	data, ok := r.fetchMPASettings(ctx, &resp.Diagnostics)
+	if !ok {
+		return
+	}
+
 	resp.Diagnostics.Append(resp.Identity.Set(ctx, MPASettingsIdentityModel{Id: types.StringValue("mpa_settings")})...)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
@@ -201,8 +239,16 @@ func (r *MPASettingsResource) Update(ctx context.Context, req resource.UpdateReq
 		tflog.Info(ctx, "Updated MPA settings")
 	}
 
+	// Refresh from the server so state reflects authoritative values, in
+	// particular for an attribute the user removed from config: the
+	// presence-sensitive Set RPC left the server value in place.
+	final, ok := r.fetchMPASettings(ctx, &resp.Diagnostics)
+	if !ok {
+		return
+	}
+
 	resp.Diagnostics.Append(resp.Identity.Set(ctx, MPASettingsIdentityModel{Id: types.StringValue("mpa_settings")})...)
-	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+	resp.Diagnostics.Append(resp.State.Set(ctx, &final)...)
 }
 
 func (r *MPASettingsResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {

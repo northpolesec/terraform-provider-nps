@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/list"
 	listschema "github.com/hashicorp/terraform-plugin-framework/list/schema"
@@ -20,6 +21,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/durationpb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	svcpb "buf.build/gen/go/northpolesec/workshop-api/grpc/go/workshop/v1/workshopv1grpc"
 	apipb "buf.build/gen/go/northpolesec/workshop-api/protocolbuffers/go/workshop/v1"
@@ -52,6 +54,40 @@ type APIKeyResourceModel struct {
 	Permissions types.List   `tfsdk:"permissions"`
 	Lifetime    types.Int64  `tfsdk:"lifetime"`
 	Secret      types.String `tfsdk:"secret"`
+	Expires     types.String `tfsdk:"expires"`
+}
+
+const (
+	// defaultAPIKeyLifetimeHours is the lifetime applied when the configuration
+	// leaves lifetime unset.
+	defaultAPIKeyLifetimeHours = 24 * 30
+
+	// The bounds the API enforces on CreateAPIKeyRequest.lifetime (a duration
+	// of at least 1 hour and at most 365 days), in the hours this attribute is
+	// expressed in. Validating against them keeps an out-of-range lifetime a
+	// plan error rather than an apply failure, and keeps the conversion below
+	// well away from the int64 nanosecond overflow at ~2.56 million hours.
+	minAPIKeyLifetimeHours = 1
+	maxAPIKeyLifetimeHours = 365 * 24
+)
+
+// apiKeyLifetime is the lifetime the configuration asks for. The schema bounds
+// lifetime to minAPIKeyLifetimeHours..maxAPIKeyLifetimeHours, so the only
+// value needing a fallback here is an unset one.
+func apiKeyLifetime(lifetime types.Int64) time.Duration {
+	if lifetime.IsNull() {
+		return defaultAPIKeyLifetimeHours * time.Hour
+	}
+	return time.Duration(lifetime.ValueInt64()) * time.Hour
+}
+
+// apiKeyExpires renders an expiry timestamp for the model, or null when the
+// server did not report one.
+func apiKeyExpires(ts *timestamppb.Timestamp) types.String {
+	if ts == nil {
+		return types.StringNull()
+	}
+	return types.StringValue(ts.AsTime().Format(time.RFC3339))
 }
 
 func (r *APIKeyResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -67,6 +103,12 @@ func (r *APIKeyResource) Schema(ctx context.Context, req resource.SchemaRequest,
 			"name": schema.StringAttribute{
 				MarkdownDescription: "The name for this key",
 				Required:            true,
+				// The name is the key's identifier: UpdateAPIKey replaces an
+				// existing key's permissions and expiry but cannot rename it, so a
+				// new name must create a new key.
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
 			},
 			"permissions": schema.ListAttribute{
 				MarkdownDescription: "The permissions for this key",
@@ -77,8 +119,18 @@ func (r *APIKeyResource) Schema(ctx context.Context, req resource.SchemaRequest,
 				},
 			},
 			"lifetime": schema.Int64Attribute{
-				MarkdownDescription: "The lifetime for this key in hours",
+				MarkdownDescription: "The lifetime for this key in hours. Must be between 1 and 8760 (365 days). Omit it to default to 30 days. Changing it re-bases `expires` on the time of the apply.",
 				Optional:            true,
+				Validators: []validator.Int64{
+					int64validator.Between(minAPIKeyLifetimeHours, maxAPIKeyLifetimeHours),
+				},
+			},
+
+			// Computed value, returned from Create and refreshed on Read. Left
+			// without UseStateForUnknown because changing lifetime moves it.
+			"expires": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "When this key expires, as an RFC 3339 timestamp.",
 			},
 
 			// Computed value, returned from Create
@@ -129,15 +181,10 @@ func (r *APIKeyResource) Create(ctx context.Context, req resource.CreateRequest,
 		perms = append(perms, e.ValueString())
 	}
 
-	lifetimeHours := time.Duration(data.Lifetime.ValueInt64()) * time.Hour
-	if lifetimeHours == 0 {
-		lifetimeHours = 24 * 30 * time.Hour
-	}
-
 	ckResp, err := r.client.CreateAPIKey(ctx, apipb.CreateAPIKeyRequest_builder{
 		Name:        proto.String(data.Name.ValueString()),
 		Permissions: perms,
-		Lifetime:    durationpb.New(lifetimeHours),
+		Lifetime:    durationpb.New(apiKeyLifetime(data.Lifetime)),
 	}.Build())
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Failed to create API key: %v", err))
@@ -149,7 +196,9 @@ func (r *APIKeyResource) Create(ctx context.Context, req resource.CreateRequest,
 	}
 
 	data.Secret = types.StringValue(ckResp.GetSecret())
-	tflog.Info(ctx, fmt.Sprintf("Created API key: %q", data.Secret))
+	data.Expires = apiKeyExpires(ckResp.GetExpires())
+	// Never log the secret.
+	tflog.Info(ctx, fmt.Sprintf("Created API key: %q", data.Name.ValueString()))
 
 	// Set the identity
 	resp.Diagnostics.Append(resp.Identity.Set(ctx, APIKeyIdentityModel{Name: data.Name})...)
@@ -185,6 +234,7 @@ func (r *APIKeyResource) Read(ctx context.Context, req resource.ReadRequest, res
 	key := ret.GetKeys()[0]
 	data.Name = types.StringValue(key.GetName())
 	data.Permissions, _ = types.ListValueFrom(ctx, types.StringType, key.GetPermissions())
+	data.Expires = apiKeyExpires(key.GetExpires())
 
 	// Set the identity
 	resp.Diagnostics.Append(resp.Identity.Set(ctx, APIKeyIdentityModel{Name: data.Name})...)
@@ -194,17 +244,54 @@ func (r *APIKeyResource) Read(ctx context.Context, req resource.ReadRequest, res
 }
 
 func (r *APIKeyResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var data APIKeyResourceModel
+	var plan, state APIKeyResourceModel
 
-	// Read Terraform plan data into the model
-	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
+	var perms []string
+	resp.Diagnostics.Append(plan.Permissions.ElementsAs(ctx, &perms, false)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// UpdateAPIKey replaces both the permissions and the expiry on every call,
+	// so we always have to supply an expiry. Re-derive it from the configured
+	// lifetime only when that lifetime changed; otherwise carry the current
+	// expiry forward, so changing permissions alone does not silently extend the
+	// key. A prior state without a usable expiry (the attribute predates this
+	// provider version) falls back to the configured lifetime.
+	expires := state.Expires
+	if !plan.Lifetime.Equal(state.Lifetime) || expires.IsNull() {
+		expires = types.StringValue(time.Now().Add(apiKeyLifetime(plan.Lifetime)).Format(time.RFC3339))
+	}
+	expiresAt, err := time.Parse(time.RFC3339, expires.ValueString())
+	if err != nil {
+		expiresAt = time.Now().Add(apiKeyLifetime(plan.Lifetime))
+		expires = types.StringValue(expiresAt.Format(time.RFC3339))
+	}
+
+	if _, err := r.client.UpdateAPIKey(ctx, apipb.UpdateAPIKeyRequest_builder{
+		Name:        proto.String(plan.Name.ValueString()),
+		Permissions: perms,
+		Expires:     timestamppb.New(expiresAt),
+	}.Build()); err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Failed to update API key: %v", err))
+		return
+	}
+	tflog.Info(ctx, fmt.Sprintf("Updated API key: %q", plan.Name.ValueString()))
+
+	plan.Expires = expires
+
+	// Set the identity
+	resp.Diagnostics.Append(resp.Identity.Set(ctx, APIKeyIdentityModel{Name: plan.Name})...)
+
 	// Save updated data into Terraform state
-	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
 func (r *APIKeyResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
@@ -227,7 +314,12 @@ func (r *APIKeyResource) Delete(ctx context.Context, req resource.DeleteRequest,
 }
 
 func (r *APIKeyResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+	// An API key is identified by its name; the schema has no id attribute.
+	if req.ID == "" {
+		resp.Diagnostics.AddError("Invalid Import ID", "Expected the API key name, got an empty string.")
+		return
+	}
+	resource.ImportStatePassthroughID(ctx, path.Root("name"), req, resp)
 }
 
 func (r *APIKeyResource) IdentitySchema(ctx context.Context, req resource.IdentitySchemaRequest, resp *resource.IdentitySchemaResponse) {

@@ -4,6 +4,7 @@ package provider
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/int32validator"
@@ -85,6 +86,17 @@ const blockReasonPrefix = "BLOCK_REASON_"
 // handled by blockReasonDefault.
 func blockReasonAcceptedValues() []string {
 	return utils.ProtoEnumAcceptedValues(apipb.Rule_BlockReason(0).Descriptor(), blockReasonPrefix)
+}
+
+// rulePolicyValidValues is the policy validator list minus REMOVE, which marks
+// an existing rule for deletion during rule download rather than describing a
+// rule's own state. Declaring one is meaningless: deleting the resource is how
+// Terraform removes a rule. Shared by the rule and package rule resources.
+func rulePolicyValidValues() []string {
+	return slices.DeleteFunc(
+		utils.ProtoEnumValidValues(apipb.Policy(0).Descriptor()),
+		func(s string) bool { return s == "REMOVE" },
+	)
 }
 
 // blockReasonDefault resolves an unset block_reason the same way the server
@@ -189,7 +201,7 @@ func (r *RuleResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 				MarkdownDescription: "The policy for this rule. The possible values are: `ALLOWLIST`, `ALLOWLIST_COMPILER`, `BLOCKLIST`, `SILENT_BLOCKLIST`, `SILENT_GUI_BLOCKLIST`, `SILENT_TTY_BLOCKLIST`, `CEL`, and `SEATBELT`.",
 				Required:            true,
 				Validators: []validator.String{
-					stringvalidator.OneOf(utils.ProtoEnumValidValues(apipb.Policy(0).Descriptor())...),
+					stringvalidator.OneOf(rulePolicyValidValues()...),
 				},
 			},
 			"block_reason": schema.StringAttribute{

@@ -58,11 +58,11 @@ func packageSourceAcceptedValues() []string {
 	)
 }
 
-// packagePolicyAcceptedValues is the policy validator list minus SEATBELT,
-// which package rules cannot carry (no seatbelt_policy field).
+// packagePolicyAcceptedValues is rulePolicyValidValues minus SEATBELT, which
+// package rules cannot carry (no seatbelt_policy field).
 func packagePolicyAcceptedValues() []string {
 	return slices.DeleteFunc(
-		utils.ProtoEnumValidValues(apipb.Policy(0).Descriptor()),
+		rulePolicyValidValues(),
 		func(s string) bool { return s == "SEATBELT" },
 	)
 }

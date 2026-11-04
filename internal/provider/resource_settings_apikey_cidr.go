@@ -11,6 +11,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/identityschema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
@@ -52,8 +53,14 @@ func (r *APIKeyCIDRSettingsResource) Schema(ctx context.Context, req resource.Sc
 
 		Attributes: map[string]schema.Attribute{
 			"enabled": schema.BoolAttribute{
-				Optional:            true,
-				MarkdownDescription: "Whether CIDR restrictions are enforced for API key requests. Kept separate from `allowed_cidrs` so an allowlist can be staged without being active, or enforcement can be paused without losing the configured ranges.",
+				Optional: true,
+				// Computed + a false default because SetAPIKeyCIDRSettings replaces
+				// the whole message: omitting the attribute really does store
+				// enabled = false, and Read reports that back. Leaving it as a bare
+				// Optional made every refresh diff false against null forever.
+				Computed:            true,
+				Default:             booldefault.StaticBool(false),
+				MarkdownDescription: "Whether CIDR restrictions are enforced for API key requests. Defaults to `false`. Kept separate from `allowed_cidrs` so an allowlist can be staged without being active, or enforcement can be paused without losing the configured ranges.",
 			},
 			"allowed_cidrs": schema.ListAttribute{
 				Optional:            true,
