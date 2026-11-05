@@ -5,10 +5,9 @@ resource "nps_workshop_approval_workflow_settings" "dev" {
   notification_method = "SLACK"
 
   social_voting {
-    local_threshold             = 2
-    tag_threshold               = 5
-    tags_to_consider_votes_from = ["dev", "sre"]
-    require_justification       = true
+    local_threshold       = 2
+    tag_threshold         = 5
+    require_justification = true
   }
 }
 

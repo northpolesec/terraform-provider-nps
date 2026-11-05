@@ -199,10 +199,9 @@ func TestApprovalWorkflowRoundtrip(t *testing.T) {
 			model: func() ApprovalWorkflowSettingsResourceModel {
 				m := base()
 				m.SocialVoting = &ApprovalWorkflowSocialVotingModel{
-					LocalThreshold:          types.Int64Value(2),
-					TagThreshold:            types.Int64Value(5),
-					TagsToConsiderVotesFrom: stringList(t, "dev", "sre"),
-					RequireJustification:    types.BoolValue(false),
+					LocalThreshold:       types.Int64Value(2),
+					TagThreshold:         types.Int64Value(5),
+					RequireJustification: types.BoolValue(false),
 				}
 				return m
 			},
@@ -211,11 +210,10 @@ func TestApprovalWorkflowRoundtrip(t *testing.T) {
 				if sv.GetLocalThreshold() != 2 || sv.GetTagThreshold() != 5 {
 					t.Errorf("thresholds = %d/%d, want 2/5", sv.GetLocalThreshold(), sv.GetTagThreshold())
 				}
-				if tags := sv.GetTagsToConsiderVotesFrom(); len(tags) != 2 || tags[1] != "sre" {
-					t.Errorf("tags_to_consider_votes_from = %v", tags)
+				if tags := sv.GetTagsToConsiderVotesFrom(); len(tags) != 0 {
+					t.Errorf("tags_to_consider_votes_from = %v, want empty so the server defaults it", tags)
 				}
-				if got.SocialVoting.TagThreshold.ValueInt64() != 5 ||
-					len(got.SocialVoting.TagsToConsiderVotesFrom.Elements()) != 2 {
+				if got.SocialVoting.TagThreshold.ValueInt64() != 5 {
 					t.Errorf("social_voting = %+v", got.SocialVoting)
 				}
 			},
@@ -407,9 +405,6 @@ func TestApprovalWorkflowConfigValidation(t *testing.T) {
 			if da := model.DesignatedApprover; da != nil {
 				da.ApproverEmails = nullList(da.ApproverEmails)
 			}
-			if sv := model.SocialVoting; sv != nil {
-				sv.TagsToConsiderVotesFrom = nullList(sv.TagsToConsiderVotesFrom)
-			}
 
 			// tfsdk.Config has no Set; build the value through a State and
 			// hand the raw object to the config under the same schema.
@@ -430,15 +425,13 @@ func TestApprovalWorkflowConfigValidation(t *testing.T) {
 	}
 }
 
-// TestApprovalWorkflowReadKeepsDefaultedVoteTagsNull guards the refresh loop:
-// the server fills tags_to_consider_votes_from with the workflow's own tag, so
-// reading it straight back would diff against a configuration that never set
-// it.
-func TestApprovalWorkflowReadKeepsDefaultedVoteTagsNull(t *testing.T) {
+// TestApprovalWorkflowReadIgnoresVoteTags checks that a social voting record
+// reads back cleanly whatever vote tags the server holds, since the provider
+// does not manage them.
+func TestApprovalWorkflowReadIgnoresVoteTags(t *testing.T) {
 	ctx := context.Background()
 
-	read := func(prior ApprovalWorkflowSettingsResourceModel, voteTags []string) ApprovalWorkflowSettingsResourceModel {
-		t.Helper()
+	for _, voteTags := range [][]string{nil, {"dev"}, {"dev", "sre"}} {
 		r := &ApprovalWorkflowSettingsResource{client: &fakeApprovalWorkflowClient{
 			settings: []*apipb.ApprovalWorkflowSettings{
 				apipb.ApprovalWorkflowSettings_builder{
@@ -458,6 +451,15 @@ func TestApprovalWorkflowReadKeepsDefaultedVoteTagsNull(t *testing.T) {
 		var iResp resource.IdentitySchemaResponse
 		r.IdentitySchema(ctx, resource.IdentitySchemaRequest{}, &iResp)
 
+		prior := ApprovalWorkflowSettingsResourceModel{
+			Tag:                types.StringValue("dev"),
+			ApprovalRuleType:   types.StringValue("CDHASH"),
+			NotificationMethod: types.StringNull(),
+			SocialVoting: &ApprovalWorkflowSocialVotingModel{
+				LocalThreshold: types.Int64Value(2),
+				TagThreshold:   types.Int64Value(5),
+			},
+		}
 		req := resource.ReadRequest{State: tfsdk.State{Schema: sResp.Schema}}
 		if diags := req.State.Set(ctx, prior); diags.HasError() {
 			t.Fatalf("building state: %v", diags)
@@ -468,53 +470,19 @@ func TestApprovalWorkflowReadKeepsDefaultedVoteTagsNull(t *testing.T) {
 		}
 		r.Read(ctx, req, resp)
 		if resp.Diagnostics.HasError() {
-			t.Fatalf("read: %v", resp.Diagnostics)
+			t.Fatalf("read with vote tags %v: %v", voteTags, resp.Diagnostics)
 		}
 		var got ApprovalWorkflowSettingsResourceModel
 		if diags := resp.State.Get(ctx, &got); diags.HasError() {
 			t.Fatalf("reading state: %v", diags)
 		}
-		return got
-	}
-
-	prior := ApprovalWorkflowSettingsResourceModel{
-		Tag:                types.StringValue("dev"),
-		ApprovalRuleType:   types.StringValue("CDHASH"),
-		NotificationMethod: types.StringNull(),
-		SocialVoting: &ApprovalWorkflowSocialVotingModel{
-			LocalThreshold:          types.Int64Value(2),
-			TagThreshold:            types.Int64Value(5),
-			TagsToConsiderVotesFrom: types.ListNull(types.StringType),
-		},
-	}
-
-	got := read(prior, []string{"dev"})
-	if !got.SocialVoting.TagsToConsiderVotesFrom.IsNull() {
-		t.Errorf("tags_to_consider_votes_from = %v, want null when the server only echoed the default",
-			got.SocialVoting.TagsToConsiderVotesFrom)
-	}
-	if !got.NotificationMethod.IsNull() {
-		t.Errorf("notification_method = %v, want null when the server reports UNSPECIFIED", got.NotificationMethod)
-	}
-
-	// An explicitly empty list asks for the same default, so it must survive
-	// as an empty list rather than becoming the tag the server filled in.
-	empty := prior
-	empty.SocialVoting = &ApprovalWorkflowSocialVotingModel{
-		LocalThreshold:          types.Int64Value(2),
-		TagThreshold:            types.Int64Value(5),
-		TagsToConsiderVotesFrom: stringList(t),
-	}
-	got = read(empty, []string{"dev"})
-	if got.SocialVoting.TagsToConsiderVotesFrom.IsNull() || len(got.SocialVoting.TagsToConsiderVotesFrom.Elements()) != 0 {
-		t.Errorf("tags_to_consider_votes_from = %v, want the configured empty list",
-			got.SocialVoting.TagsToConsiderVotesFrom)
-	}
-
-	// A tag the configuration did not set is real drift and must surface.
-	got = read(prior, []string{"dev", "sre"})
-	if n := len(got.SocialVoting.TagsToConsiderVotesFrom.Elements()); n != 2 {
-		t.Errorf("tags_to_consider_votes_from has %d entries, want the 2 the server reported", n)
+		if got.SocialVoting == nil || got.SocialVoting.LocalThreshold.ValueInt64() != 2 ||
+			got.SocialVoting.TagThreshold.ValueInt64() != 5 || !got.SocialVoting.RequireJustification.IsNull() {
+			t.Errorf("vote tags %v: social_voting = %+v, want the prior state", voteTags, got.SocialVoting)
+		}
+		if !got.NotificationMethod.IsNull() {
+			t.Errorf("notification_method = %v, want null when the server reports UNSPECIFIED", got.NotificationMethod)
+		}
 	}
 }
 
