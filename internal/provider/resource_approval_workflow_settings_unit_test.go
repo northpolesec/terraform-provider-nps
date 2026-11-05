@@ -660,3 +660,39 @@ func TestApprovalWorkflowReadKeepsUnsetBoolsNull(t *testing.T) {
 		t.Errorf("allow_tag_approval = %v, want an explicit false", got.DesignatedApprover.AllowTagApproval)
 	}
 }
+
+// TestApproverEmailsToTFKeepsConfiguredCase checks that Workshop lowercasing
+// approver emails does not read back as drift, while a real change does.
+func TestApproverEmailsToTFKeepsConfiguredCase(t *testing.T) {
+	ctx := context.Background()
+	prior := stringList(t, "Alice@Example.com", "bob@example.com")
+
+	for _, c := range []struct {
+		name   string
+		server []string
+		want   []string
+	}{
+		{"case-only difference keeps prior", []string{"alice@example.com", "bob@example.com"}, []string{"Alice@Example.com", "bob@example.com"}},
+		{"different email surfaces", []string{"alice@example.com", "carol@example.com"}, []string{"alice@example.com", "carol@example.com"}},
+		{"reordered emails surface", []string{"bob@example.com", "alice@example.com"}, []string{"bob@example.com", "alice@example.com"}},
+		{"added email surfaces", []string{"alice@example.com", "bob@example.com", "carol@example.com"}, []string{"alice@example.com", "bob@example.com", "carol@example.com"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			var diags diag.Diagnostics
+			got := approverEmailsToTF(ctx, c.server, prior, &diags)
+			if diags.HasError() {
+				t.Fatalf("approverEmailsToTF: %v", diags)
+			}
+			if want := stringList(t, c.want...); !got.Equal(want) {
+				t.Errorf("approver_emails = %v, want %v", got, want)
+			}
+		})
+	}
+
+	// No prior, as on import: take the server's value.
+	var diags diag.Diagnostics
+	got := approverEmailsToTF(ctx, []string{"alice@example.com"}, types.ListNull(types.StringType), &diags)
+	if want := stringList(t, "alice@example.com"); diags.HasError() || !got.Equal(want) {
+		t.Errorf("approver_emails = %v (diags %v), want %v", got, diags, want)
+	}
+}

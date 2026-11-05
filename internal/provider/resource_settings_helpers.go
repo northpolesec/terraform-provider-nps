@@ -128,9 +128,13 @@ func tfInt64SetToInt32s(ctx context.Context, set types.Set, diags *diag.Diagnost
 }
 
 // tagNameRegex and tagNameMaxLen mirror the server-side tag validation
-// (letters, digits, '.', ':', '-', '_', max 42 characters). Enforcing them in
-// the provider gives early feedback and ensures a tag cannot break out of the
-// filter string it is interpolated into.
-var tagNameRegex = regexp.MustCompile(`^[\p{L}\p{N}.:_-]+$`)
+// (letters, digits, single interior spaces, '.', ':', '-', '_', max 42
+// characters). Enforcing them in the provider gives early feedback and ensures
+// a tag cannot break out of the filter string it is interpolated into.
+var tagNameRegex = regexp.MustCompile(`^[\p{L}\p{N}.:_-]+( [\p{L}\p{N}.:_-]+)*$`)
 
-const tagNameMaxLen = 42
+const (
+	tagNameMaxLen = 42
+
+	tagNameRegexMessage = "must contain only letters, digits, spaces, periods, colons, hyphens, and underscores, and must not start or end with a space or contain consecutive spaces"
+)

@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
@@ -96,8 +97,8 @@ func (r *ApprovalWorkflowSettingsResource) Schema(ctx context.Context, req resou
 
 		Attributes: map[string]schema.Attribute{
 			"tag": schema.StringAttribute{
-				Description:         "The tag whose approval workflow this resource manages. The tag must already exist in Workshop. Use global for the fleet-wide fallback workflow. Changing the tag forces replacement. May contain only letters, digits, periods, colons, hyphens, and underscores (max 42 characters).",
-				MarkdownDescription: "The tag whose approval workflow this resource manages. The tag must already exist in Workshop. Use `global` for the fleet-wide fallback workflow. Changing the tag forces replacement. May contain only letters, digits, periods, colons, hyphens, and underscores (max 42 characters).",
+				Description:         "The tag whose approval workflow this resource manages. The tag must already exist in Workshop. Use global for the fleet-wide fallback workflow. Changing the tag forces replacement. May contain only letters, digits, single spaces between words, periods, colons, hyphens, and underscores (max 42 characters).",
+				MarkdownDescription: "The tag whose approval workflow this resource manages. The tag must already exist in Workshop. Use `global` for the fleet-wide fallback workflow. Changing the tag forces replacement. May contain only letters, digits, single spaces between words, periods, colons, hyphens, and underscores (max 42 characters).",
 				Required:            true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
@@ -106,7 +107,7 @@ func (r *ApprovalWorkflowSettingsResource) Schema(ctx context.Context, req resou
 					stringvalidator.LengthBetween(1, tagNameMaxLen),
 					stringvalidator.RegexMatches(
 						tagNameRegex,
-						"must contain only letters, digits, periods, colons, hyphens, and underscores",
+						tagNameRegexMessage,
 					),
 				},
 			},
@@ -156,7 +157,7 @@ func (r *ApprovalWorkflowSettingsResource) Schema(ctx context.Context, req resou
 							stringvalidator.LengthBetween(1, tagNameMaxLen),
 							stringvalidator.RegexMatches(
 								tagNameRegex,
-								"must contain only letters, digits, periods, colons, hyphens, and underscores",
+								tagNameRegexMessage,
 							),
 						},
 					},
@@ -491,7 +492,7 @@ func (r *ApprovalWorkflowSettingsResource) ImportState(ctx context.Context, req 
 	if !tagNameRegex.MatchString(req.ID) {
 		resp.Diagnostics.AddError(
 			"Invalid import ID",
-			fmt.Sprintf("tag %q must contain only letters, digits, periods, colons, hyphens, and underscores", req.ID),
+			fmt.Sprintf("tag %q %s", req.ID, tagNameRegexMessage),
 		)
 		return
 	}
@@ -645,9 +646,7 @@ func approvalWorkflowProtoToModel(ctx context.Context, prior *ApprovalWorkflowSe
 			m.ApproverTag = types.StringValue(da.GetTag().GetTag())
 			m.Threshold = types.Int64Value(int64(da.GetTag().GetThreshold()))
 		case apipb.DesignatedApproverWorkflowSettings_Emails_case:
-			list, d := types.ListValueFrom(ctx, types.StringType, da.GetEmails().GetApproverEmails())
-			diags.Append(d...)
-			m.ApproverEmails = list
+			m.ApproverEmails = approverEmailsToTF(ctx, da.GetEmails().GetApproverEmails(), priorDA.ApproverEmails, diags)
 			m.Threshold = types.Int64Value(int64(da.GetEmails().GetThreshold()))
 		case apipb.DesignatedApproverWorkflowSettings_Manager_case:
 			m.ApproverIsManager = types.BoolValue(true)
@@ -684,6 +683,22 @@ func voteTagsToTF(ctx context.Context, tags []string, workflowTag string, prior 
 		return prior
 	}
 	list, d := types.ListValueFrom(ctx, types.StringType, tags)
+	diags.Append(d...)
+	return list
+}
+
+// approverEmailsToTF keeps the prior spelling of approver_emails when the
+// server's list differs only by case. Workshop lowercases approver emails, so
+// reading them back verbatim would diff against a mixed-case configuration.
+func approverEmailsToTF(ctx context.Context, emails []string, prior types.List, diags *diag.Diagnostics) types.List {
+	if !prior.IsNull() && !prior.IsUnknown() && len(prior.Elements()) == len(emails) {
+		var priorEmails []string
+		diags.Append(prior.ElementsAs(ctx, &priorEmails, false)...)
+		if slices.EqualFunc(priorEmails, emails, strings.EqualFold) {
+			return prior
+		}
+	}
+	list, d := types.ListValueFrom(ctx, types.StringType, emails)
 	diags.Append(d...)
 	return list
 }

@@ -56,7 +56,7 @@ resource "nps_workshop_sync_settings" "dev_settings" {
 
 ### Required
 
-- `tag` (String) The tag whose sync settings this resource manages. Changing the tag forces replacement. May contain only letters, digits, periods, colons, hyphens, and underscores (max 42 characters).
+- `tag` (String) The tag whose sync settings this resource manages. Changing the tag forces replacement. May contain only letters, digits, single spaces between words, periods, colons, hyphens, and underscores (max 42 characters).
 
 ### Optional
 

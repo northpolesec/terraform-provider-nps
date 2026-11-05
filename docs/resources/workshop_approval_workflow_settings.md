@@ -55,7 +55,7 @@ resource "nps_workshop_approval_workflow_settings" "contractors" {
 ### Required
 
 - `approval_rule_type` (String) The type of rule a successful approval creates. The possible values are: `BINARY`, `CDHASH`, and `SIGNINGID`. Required even when no workflow block is set.
-- `tag` (String) The tag whose approval workflow this resource manages. The tag must already exist in Workshop. Use `global` for the fleet-wide fallback workflow. Changing the tag forces replacement. May contain only letters, digits, periods, colons, hyphens, and underscores (max 42 characters).
+- `tag` (String) The tag whose approval workflow this resource manages. The tag must already exist in Workshop. Use `global` for the fleet-wide fallback workflow. Changing the tag forces replacement. May contain only letters, digits, single spaces between words, periods, colons, hyphens, and underscores (max 42 characters).
 
 ### Optional
 

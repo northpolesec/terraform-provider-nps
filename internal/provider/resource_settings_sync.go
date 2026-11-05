@@ -141,8 +141,8 @@ func (r *SyncSettingsResource) Schema(ctx context.Context, req resource.SchemaRe
 
 		Attributes: map[string]schema.Attribute{
 			"tag": schema.StringAttribute{
-				Description:         "The tag whose sync settings this resource manages. Changing the tag forces replacement. May contain only letters, digits, periods, colons, hyphens, and underscores (max 42 characters).",
-				MarkdownDescription: "The tag whose sync settings this resource manages. Changing the tag forces replacement. May contain only letters, digits, periods, colons, hyphens, and underscores (max 42 characters).",
+				Description:         "The tag whose sync settings this resource manages. Changing the tag forces replacement. May contain only letters, digits, single spaces between words, periods, colons, hyphens, and underscores (max 42 characters).",
+				MarkdownDescription: "The tag whose sync settings this resource manages. Changing the tag forces replacement. May contain only letters, digits, single spaces between words, periods, colons, hyphens, and underscores (max 42 characters).",
 				Required:            true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
@@ -151,7 +151,7 @@ func (r *SyncSettingsResource) Schema(ctx context.Context, req resource.SchemaRe
 					stringvalidator.LengthBetween(1, tagNameMaxLen),
 					stringvalidator.RegexMatches(
 						tagNameRegex,
-						"must contain only letters, digits, periods, colons, hyphens, and underscores",
+						tagNameRegexMessage,
 					),
 				},
 			},
@@ -761,7 +761,7 @@ func (r *SyncSettingsResource) ImportState(ctx context.Context, req resource.Imp
 	if !tagNameRegex.MatchString(req.ID) {
 		resp.Diagnostics.AddError(
 			"Invalid import ID",
-			fmt.Sprintf("tag %q must contain only letters, digits, periods, colons, hyphens, and underscores", req.ID),
+			fmt.Sprintf("tag %q %s", req.ID, tagNameRegexMessage),
 		)
 		return
 	}
