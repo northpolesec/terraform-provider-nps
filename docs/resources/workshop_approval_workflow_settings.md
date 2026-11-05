@@ -20,10 +20,9 @@ resource "nps_workshop_approval_workflow_settings" "dev" {
   notification_method = "SLACK"
 
   social_voting {
-    local_threshold             = 2
-    tag_threshold               = 5
-    tags_to_consider_votes_from = ["dev", "sre"]
-    require_justification       = true
+    local_threshold       = 2
+    tag_threshold         = 5
+    require_justification = true
   }
 }
 
@@ -62,7 +61,7 @@ resource "nps_workshop_approval_workflow_settings" "contractors" {
 - `designated_approver` (Block, Optional) Named approvers decide the request. Exactly one of `approver_tag`, `approver_emails`, or `approver_is_manager` must be set. Mutually exclusive with the other workflow blocks. (see [below for nested schema](#nestedblock--designated_approver))
 - `notification_method` (String) How requestors and approvers are notified. The possible values are: `NONE` and `SLACK`. The `NOTIFICATION_METHOD_`-prefixed spellings are accepted as aliases.
 - `self_service` (Block, Optional) Users approve their own requests. Mutually exclusive with the other workflow blocks. (see [below for nested schema](#nestedblock--self_service))
-- `social_voting` (Block, Optional) Peers vote on the request. Mutually exclusive with the other workflow blocks. (see [below for nested schema](#nestedblock--social_voting))
+- `social_voting` (Block, Optional) Peers vote on the request. Votes count from users carrying the workflow's tag. Mutually exclusive with the other workflow blocks. (see [below for nested schema](#nestedblock--social_voting))
 
 <a id="nestedblock--designated_approver"></a>
 ### Nested Schema for `designated_approver`
@@ -94,4 +93,3 @@ Optional:
 - `local_threshold` (Number) Votes required to approve the software for the requestor alone. Required when the block is present.
 - `require_justification` (Boolean) Whether the requestor must provide a justification.
 - `tag_threshold` (Number) Votes required to approve the software for every user the workflow's tag covers. Required when the block is present, and must be at least `local_threshold`.
-- `tags_to_consider_votes_from` (List of String) Tags whose users' votes count toward the thresholds. Defaults to the workflow's own tag.

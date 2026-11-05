@@ -70,10 +70,9 @@ type ApprovalWorkflowDesignatedApproverModel struct {
 }
 
 type ApprovalWorkflowSocialVotingModel struct {
-	LocalThreshold          types.Int64 `tfsdk:"local_threshold"`
-	TagThreshold            types.Int64 `tfsdk:"tag_threshold"`
-	TagsToConsiderVotesFrom types.List  `tfsdk:"tags_to_consider_votes_from"`
-	RequireJustification    types.Bool  `tfsdk:"require_justification"`
+	LocalThreshold       types.Int64 `tfsdk:"local_threshold"`
+	TagThreshold         types.Int64 `tfsdk:"tag_threshold"`
+	RequireJustification types.Bool  `tfsdk:"require_justification"`
 }
 
 // notificationMethodPrefix is stripped from NotificationMethod values in HCL:
@@ -200,8 +199,8 @@ func (r *ApprovalWorkflowSettingsResource) Schema(ctx context.Context, req resou
 				},
 			},
 			"social_voting": schema.SingleNestedBlock{
-				Description:         "Peers vote on the request. Mutually exclusive with the other workflow blocks.",
-				MarkdownDescription: "Peers vote on the request. Mutually exclusive with the other workflow blocks.",
+				Description:         "Peers vote on the request. Votes count from users carrying the workflow's tag. Mutually exclusive with the other workflow blocks.",
+				MarkdownDescription: "Peers vote on the request. Votes count from users carrying the workflow's tag. Mutually exclusive with the other workflow blocks.",
 				Attributes: map[string]schema.Attribute{
 					"local_threshold": schema.Int64Attribute{
 						Description:         "Votes required to approve the software for the requestor alone. Required when the block is present.",
@@ -222,12 +221,6 @@ func (r *ApprovalWorkflowSettingsResource) Schema(ctx context.Context, req resou
 							// conversion silently wraps (4294967296 becomes 0).
 							int64validator.Between(1, int64(math.MaxUint32)),
 						},
-					},
-					"tags_to_consider_votes_from": schema.ListAttribute{
-						Description:         "Tags whose users' votes count toward the thresholds. Defaults to the workflow's own tag.",
-						MarkdownDescription: "Tags whose users' votes count toward the thresholds. Defaults to the workflow's own tag.",
-						Optional:            true,
-						ElementType:         types.StringType,
 					},
 					"require_justification": schema.BoolAttribute{
 						Description:         "Whether the requestor must provide a justification.",
@@ -582,16 +575,13 @@ func approvalWorkflowModelToProto(ctx context.Context, data *ApprovalWorkflowSet
 		}
 		b.DesignatedApprover = dab.Build()
 	case data.SocialVoting != nil:
+		// TagsToConsiderVotesFrom is left empty: the server defaults it to
+		// the workflow's own tag.
 		sv := data.SocialVoting
-		var tags []string
-		if !sv.TagsToConsiderVotesFrom.IsNull() && !sv.TagsToConsiderVotesFrom.IsUnknown() {
-			diags.Append(sv.TagsToConsiderVotesFrom.ElementsAs(ctx, &tags, false)...)
-		}
 		b.SocialVoting = apipb.SocialVotingWorkflowSettings_builder{
-			LocalThreshold:          uint32(sv.LocalThreshold.ValueInt64()),
-			TagThreshold:            uint32(sv.TagThreshold.ValueInt64()),
-			TagsToConsiderVotesFrom: tags,
-			RequireJustification:    sv.RequireJustification.ValueBool(),
+			LocalThreshold:       uint32(sv.LocalThreshold.ValueInt64()),
+			TagThreshold:         uint32(sv.TagThreshold.ValueInt64()),
+			RequireJustification: sv.RequireJustification.ValueBool(),
 		}.Build()
 	default:
 		// No workflow block: the tag has no approval workflow, and a
@@ -603,9 +593,9 @@ func approvalWorkflowModelToProto(ctx context.Context, data *ApprovalWorkflowSet
 }
 
 // approvalWorkflowProtoToModel renders the server's record as a model. prior
-// is the state being refreshed; it supplies the enum spelling and the
-// server-defaulted vote tags, so a refresh never manufactures a diff over a
-// value the configuration never set.
+// is the state being refreshed; it supplies the enum spelling and unset
+// booleans, so a refresh never manufactures a diff over a value the
+// configuration never set.
 func approvalWorkflowProtoToModel(ctx context.Context, prior *ApprovalWorkflowSettingsResourceModel, s *apipb.ApprovalWorkflowSettings, diags *diag.Diagnostics) ApprovalWorkflowSettingsResourceModel {
 	out := ApprovalWorkflowSettingsResourceModel{
 		Tag:                types.StringValue(s.GetTag()),
@@ -656,35 +646,16 @@ func approvalWorkflowProtoToModel(ctx context.Context, prior *ApprovalWorkflowSe
 		sv := s.GetSocialVoting()
 		priorSV := prior.SocialVoting
 		if priorSV == nil {
-			priorSV = &ApprovalWorkflowSocialVotingModel{TagsToConsiderVotesFrom: types.ListNull(types.StringType)}
+			priorSV = &ApprovalWorkflowSocialVotingModel{}
 		}
 		out.SocialVoting = &ApprovalWorkflowSocialVotingModel{
-			LocalThreshold:          types.Int64Value(int64(sv.GetLocalThreshold())),
-			TagThreshold:            types.Int64Value(int64(sv.GetTagThreshold())),
-			TagsToConsiderVotesFrom: voteTagsToTF(ctx, sv.GetTagsToConsiderVotesFrom(), s.GetTag(), priorSV.TagsToConsiderVotesFrom, diags),
-			RequireJustification:    boolOrNull(priorSV.RequireJustification, sv.GetRequireJustification()),
+			LocalThreshold:       types.Int64Value(int64(sv.GetLocalThreshold())),
+			TagThreshold:         types.Int64Value(int64(sv.GetTagThreshold())),
+			RequireJustification: boolOrNull(priorSV.RequireJustification, sv.GetRequireJustification()),
 		}
 	}
 
 	return out
-}
-
-// voteTagsToTF keeps tags_to_consider_votes_from as the configuration wrote it
-// whenever the configuration named no tags at all. The server replaces an
-// unset or empty list with the workflow's own tag, so reading that default
-// back would diff against the configuration on every plan.
-func voteTagsToTF(ctx context.Context, tags []string, workflowTag string, prior types.List, diags *diag.Diagnostics) types.List {
-	namedNone := prior.IsNull() || len(prior.Elements()) == 0
-	if len(tags) == 0 || (namedNone && len(tags) == 1 && tags[0] == workflowTag) {
-		if prior.IsNull() {
-			return types.ListNull(types.StringType)
-		}
-		// An explicitly empty list, which is already correctly typed.
-		return prior
-	}
-	list, d := types.ListValueFrom(ctx, types.StringType, tags)
-	diags.Append(d...)
-	return list
 }
 
 // approverEmailsToTF keeps the prior spelling of approver_emails when the
