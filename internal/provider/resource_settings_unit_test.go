@@ -166,8 +166,9 @@ func TestRiskEngineRoundtrip(t *testing.T) {
 		t.Errorf("expected 5s plugin_timeout, got %v", round.GetPluginTimeout().AsDuration())
 	}
 	vtOut := round.GetLocalPlugins().GetVirusTotal()
-	if vtOut == nil || vtOut.GetApiKey() != "vt-api-key" {
-		t.Errorf("expected api_key=vt-api-key, got %v", vtOut)
+	// Read never copies secrets from the API: with no prior state the key is empty.
+	if vtOut == nil || vtOut.GetApiKey() != "" {
+		t.Errorf("expected empty api_key, got %v", vtOut)
 	}
 	if vtOut.GetCacheTtl().AsDuration().Minutes() != 30 {
 		t.Errorf("expected 30m cache_ttl, got %v", vtOut.GetCacheTtl().AsDuration())

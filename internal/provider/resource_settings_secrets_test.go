@@ -2,41 +2,73 @@
 package provider
 
 import (
-	svcpb "buf.build/gen/go/northpolesec/workshop-api/grpc/go/workshop/v1/workshopv1grpc"
-	apipb "buf.build/gen/go/northpolesec/workshop-api/protocolbuffers/go/workshop/v1"
 	"context"
 	"fmt"
-	"github.com/hashicorp/terraform-plugin-framework/attr"
-	"github.com/hashicorp/terraform-plugin-framework/types"
+	"net"
+	"slices"
+	"strings"
+	"sync"
+	"testing"
+
+	svcpb "buf.build/gen/go/northpolesec/workshop-api/grpc/go/workshop/v1/workshopv1grpc"
+	apipb "buf.build/gen/go/northpolesec/workshop-api/protocolbuffers/go/workshop/v1"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
-	"net"
-	"strings"
-	"sync"
-	"testing"
 )
 
+// settingsSecretServer is a fake Workshop API. Like Workshop, an empty secret
+// in a write keeps the stored one, and a remote plugin without a UUID gets one.
+// returnSecrets selects whether reads return secrets or empty values.
 type settingsSecretServer struct {
 	svcpb.UnimplementedWorkshopServiceServer
-	mu       sync.Mutex
-	chat     *apipb.SlackBotSettings
-	risk     *apipb.RiskEngineSettings
-	webhooks *apipb.WebhookSettings
+	mu            sync.Mutex
+	returnSecrets bool
+	assignUUIDs   bool
+	uuids         int
+	chat          *apipb.SlackBotSettings
+	risk          *apipb.RiskEngineSettings
+	webhooks      *apipb.WebhookSettings
 }
 
-func hiddenSecret(value string) string {
-	if strings.HasPrefix(value, "gcp://") || strings.HasPrefix(value, "aws://") {
+func keepSecret(in *string, stored string) *string {
+	if (in == nil || *in == "") && stored != "" {
+		return proto.String(stored)
+	}
+	return in
+}
+
+func keepHeaders(in, stored []*apipb.HTTPHeader) {
+	for _, h := range in {
+		for _, s := range stored {
+			if h.GetValue() == "" && strings.EqualFold(h.GetKey(), s.GetKey()) {
+				h.SetValue(s.GetValue())
+			}
+		}
+	}
+}
+
+func (s *settingsSecretServer) read(value string) string {
+	if s.returnSecrets {
 		return value
 	}
 	return ""
 }
 
-func hideHeaders(headers []*apipb.HTTPHeader) {
+func (s *settingsSecretServer) readHeaders(headers []*apipb.HTTPHeader) {
 	for _, h := range headers {
-		h.SetValue(hiddenSecret(h.GetValue()))
+		h.SetValue(s.read(h.GetValue()))
+	}
+}
+
+func (s *settingsSecretServer) fillUUIDs() {
+	for _, p := range s.risk.GetRemotePlugins() {
+		if p.GetUuid() == "" {
+			s.uuids++
+			p.SetUuid(fmt.Sprintf("uuid-%d", s.uuids))
+		}
 	}
 }
 
@@ -46,8 +78,8 @@ func (s *settingsSecretServer) GetChatSettings(context.Context, *apipb.GetChatSe
 	var chat *apipb.SlackBotSettings
 	if s.chat != nil {
 		chat = proto.Clone(s.chat).(*apipb.SlackBotSettings)
-		chat.SetToken(hiddenSecret(chat.GetToken()))
-		chat.SetHmacSigningSecret(hiddenSecret(chat.GetHmacSigningSecret()))
+		chat.SetToken(s.read(chat.GetToken()))
+		chat.SetHmacSigningSecret(s.read(chat.GetHmacSigningSecret()))
 	}
 	return apipb.GetChatSettingsResponse_builder{SlackBotSettings: chat}.Build(), nil
 }
@@ -55,7 +87,10 @@ func (s *settingsSecretServer) GetChatSettings(context.Context, *apipb.GetChatSe
 func (s *settingsSecretServer) UpdateChatSettings(_ context.Context, req *apipb.UpdateChatSettingsRequest) (*apipb.UpdateChatSettingsResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.chat = proto.Clone(req.GetSlackBotSettings()).(*apipb.SlackBotSettings)
+	in := proto.Clone(req.GetSlackBotSettings()).(*apipb.SlackBotSettings)
+	in.Token = keepSecret(in.Token, s.chat.GetToken())
+	in.HmacSigningSecret = keepSecret(in.HmacSigningSecret, s.chat.GetHmacSigningSecret())
+	s.chat = in
 	return apipb.UpdateChatSettingsResponse_builder{}.Build(), nil
 }
 
@@ -65,16 +100,15 @@ func (s *settingsSecretServer) GetRiskEngineSettings(context.Context, *apipb.Get
 	var risk *apipb.RiskEngineSettings
 	if s.risk != nil {
 		risk = proto.Clone(s.risk).(*apipb.RiskEngineSettings)
-		local := risk.GetLocalPlugins()
-		if vt := local.GetVirusTotal(); vt != nil {
-			vt.SetApiKey(hiddenSecret(vt.GetApiKey()))
+		if vt := risk.GetLocalPlugins().GetVirusTotal(); vt != nil {
+			vt.SetApiKey(s.read(vt.GetApiKey()))
 		}
-		if rl := local.GetReversingLabs(); rl != nil {
-			rl.SetPassword(hiddenSecret(rl.GetPassword()))
+		if rl := risk.GetLocalPlugins().GetReversingLabs(); rl != nil {
+			rl.SetPassword(s.read(rl.GetPassword()))
 		}
-		for _, plugin := range risk.GetRemotePlugins() {
-			plugin.SetSecret(hiddenSecret(plugin.GetSecret()))
-			hideHeaders(plugin.GetHeaders())
+		for _, p := range risk.GetRemotePlugins() {
+			p.SetSecret(s.read(p.GetSecret()))
+			s.readHeaders(p.GetHeaders())
 		}
 	}
 	return apipb.GetRiskEngineSettingsResponse_builder{RiskEngineSettings: risk}.Build(), nil
@@ -83,8 +117,30 @@ func (s *settingsSecretServer) GetRiskEngineSettings(context.Context, *apipb.Get
 func (s *settingsSecretServer) UpdateRiskEngineSettings(_ context.Context, req *apipb.UpdateRiskEngineSettingsRequest) (*apipb.UpdateRiskEngineSettingsResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.risk = proto.Clone(req.GetRiskEngineSettings()).(*apipb.RiskEngineSettings)
+	in := proto.Clone(req.GetRiskEngineSettings()).(*apipb.RiskEngineSettings)
+	if vt := in.GetLocalPlugins().GetVirusTotal(); vt != nil {
+		vt.ApiKey = keepSecret(vt.ApiKey, s.risk.GetLocalPlugins().GetVirusTotal().GetApiKey())
+	}
+	if rl := in.GetLocalPlugins().GetReversingLabs(); rl != nil {
+		rl.Password = keepSecret(rl.Password, s.risk.GetLocalPlugins().GetReversingLabs().GetPassword())
+	}
+	for _, p := range in.GetRemotePlugins() {
+		for _, stored := range s.risk.GetRemotePlugins() {
+			if p.GetUuid() != "" && p.GetUuid() == stored.GetUuid() {
+				p.Secret = keepSecret(p.Secret, stored.GetSecret())
+				keepHeaders(p.GetHeaders(), stored.GetHeaders())
+			}
+		}
+	}
+	s.risk = in
+	if s.assignUUIDs {
+		s.fillUUIDs()
+	}
 	return apipb.UpdateRiskEngineSettingsResponse_builder{}.Build(), nil
+}
+
+func webhookBasics(w *apipb.WebhookSettings) []*apipb.WebhookBasicConfig {
+	return []*apipb.WebhookBasicConfig{w.GetAuditEvents().GetBasic(), w.GetSignalReports().GetBasic(), w.GetSoftwareApprovals().GetBasic()}
 }
 
 func (s *settingsSecretServer) GetWebhookSettings(context.Context, *apipb.GetWebhookSettingsRequest) (*apipb.GetWebhookSettingsResponse, error) {
@@ -93,10 +149,10 @@ func (s *settingsSecretServer) GetWebhookSettings(context.Context, *apipb.GetWeb
 	var settings *apipb.WebhookSettings
 	if s.webhooks != nil {
 		settings = proto.Clone(s.webhooks).(*apipb.WebhookSettings)
-		for _, basic := range []*apipb.WebhookBasicConfig{settings.GetAuditEvents().GetBasic(), settings.GetSignalReports().GetBasic(), settings.GetSoftwareApprovals().GetBasic()} {
+		for _, basic := range webhookBasics(settings) {
 			if basic != nil {
 				basic.SetSecret("")
-				hideHeaders(basic.GetHeaders())
+				s.readHeaders(basic.GetHeaders())
 			}
 		}
 	}
@@ -106,250 +162,177 @@ func (s *settingsSecretServer) GetWebhookSettings(context.Context, *apipb.GetWeb
 func (s *settingsSecretServer) UpdateWebhookSettings(_ context.Context, req *apipb.UpdateWebhookSettingsRequest) (*apipb.UpdateWebhookSettingsResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.webhooks = proto.Clone(req.GetSettings()).(*apipb.WebhookSettings)
+	in := proto.Clone(req.GetSettings()).(*apipb.WebhookSettings)
+	stored := webhookBasics(s.webhooks)
+	for i, basic := range webhookBasics(in) {
+		if basic != nil {
+			keepHeaders(basic.GetHeaders(), stored[i].GetHeaders())
+		}
+	}
+	s.webhooks = in
 	return apipb.UpdateWebhookSettingsResponse_builder{}.Build(), nil
+}
+
+// storedSecrets returns every secret that the fake API holds for kind.
+func (s *settingsSecretServer) storedSecrets(kind string) []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	switch kind {
+	case "chat":
+		return []string{s.chat.GetToken(), s.chat.GetHmacSigningSecret()}
+	case "risk_engine":
+		values := []string{s.risk.GetLocalPlugins().GetVirusTotal().GetApiKey(), s.risk.GetLocalPlugins().GetReversingLabs().GetPassword()}
+		for _, p := range s.risk.GetRemotePlugins() {
+			values = append(values, p.GetSecret(), p.GetHeaders()[0].GetValue())
+		}
+		return values
+	default:
+		var values []string
+		for _, basic := range webhookBasics(s.webhooks) {
+			values = append(values, basic.GetHeaders()[0].GetValue())
+		}
+		return values
+	}
+}
+
+func startSettingsSecretServer(t *testing.T, api *settingsSecretServer) string {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := grpc.NewServer()
+	svcpb.RegisterWorkshopServiceServer(server, api)
+	t.Cleanup(server.Stop)
+	go func() { _ = server.Serve(listener) }()
+	return fmt.Sprintf("localhost:%d", listener.Addr().(*net.TCPAddr).Port)
+}
+
+func expectStored(api *settingsSecretServer, kind, want string) resource.TestCheckFunc {
+	return func(*terraform.State) error {
+		for _, got := range api.storedSecrets(kind) {
+			if got != want {
+				return fmt.Errorf("%s: API holds secret %q, want %q", kind, got, want)
+			}
+		}
+		return nil
+	}
+}
+
+// plainSecretPaths are the state paths of the deprecated plain secrets.
+var plainSecretPaths = map[string][]string{
+	"chat":        {"slack.token", "slack.hmac_signing_secret"},
+	"risk_engine": {"local_plugins.virus_total.api_key", "local_plugins.reversing_labs.password", "remote_plugins.0.secret", "remote_plugins.0.headers.0.value"},
+	"webhooks":    {"audit_events.headers.0.value", "signal_reports.headers.0.value", "software_approvals.headers.0.value"},
 }
 
 func TestSettingsSecretsPlan(t *testing.T) {
 	t.Setenv("WORKSHOP_API_KEY", "")
-	for _, kind := range []string{"chat", "risk_engine", "webhooks"} {
-		t.Run(kind, func(t *testing.T) {
-			listener, err := net.Listen("tcp", "127.0.0.1:0")
-			if err != nil {
-				t.Fatal(err)
-			}
-			server := grpc.NewServer()
-			api := &settingsSecretServer{}
-			svcpb.RegisterWorkshopServiceServer(server, api)
-			t.Cleanup(server.Stop)
-			go func() { _ = server.Serve(listener) }()
-			endpoint := fmt.Sprintf("localhost:%d", listener.Addr().(*net.TCPAddr).Port)
-			address := "nps_workshop_settings_" + kind + ".test"
-			config := func(secret string) string { return settingsSecretsConfig(endpoint, kind, secret) }
-			checkStored := func(secret string) resource.TestCheckFunc {
-				return func(_ *terraform.State) error {
-					api.mu.Lock()
-					defer api.mu.Unlock()
-					values := []string{}
-					switch kind {
-					case "chat":
-						values = []string{api.chat.GetToken(), api.chat.GetHmacSigningSecret()}
-					case "risk_engine":
-						values = []string{api.risk.GetLocalPlugins().GetVirusTotal().GetApiKey(), api.risk.GetLocalPlugins().GetReversingLabs().GetPassword()}
-						for _, plugin := range api.risk.GetRemotePlugins() {
-							values = append(values, plugin.GetSecret(), plugin.GetHeaders()[0].GetValue())
-						}
-					case "webhooks":
-						for _, basic := range []*apipb.WebhookBasicConfig{api.webhooks.GetAuditEvents().GetBasic(), api.webhooks.GetSignalReports().GetBasic(), api.webhooks.GetSoftwareApprovals().GetBasic()} {
-							values = append(values, basic.GetHeaders()[0].GetValue())
-						}
-					}
-					for _, got := range values {
-						if got != secret {
-							return fmt.Errorf("%s secret update: got %q, want %q", kind, got, secret)
-						}
-					}
-					return nil
+	for _, returnSecrets := range []bool{false, true} {
+		for _, kind := range []string{"chat", "risk_engine", "webhooks"} {
+			t.Run(fmt.Sprintf("%s/returnSecrets=%t", kind, returnSecrets), func(t *testing.T) {
+				api := &settingsSecretServer{returnSecrets: returnSecrets, assignUUIDs: true}
+				endpoint := startSettingsSecretServer(t, api)
+				address := "nps_workshop_settings_" + kind + ".test"
+				update := resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectResourceAction(address, plancheck.ResourceActionUpdate)}}
+				var noPlainSecrets []resource.TestCheckFunc
+				for _, p := range plainSecretPaths[kind] {
+					noPlainSecrets = append(noPlainSecrets, resource.TestCheckNoResourceAttr(address, p))
 				}
-			}
-			steps := []resource.TestStep{{Config: config("original-secret"), Check: checkStored("original-secret")}}
-			for _, secret := range []string{"changed-secret", "gcp://project/secret", "aws://secret"} {
-				steps = append(steps,
-					resource.TestStep{Config: config(secret), Check: checkStored(secret), ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectResourceAction(address, plancheck.ResourceActionUpdate)}}},
-				)
-			}
-			resource.UnitTest(t, resource.TestCase{ProtoV6ProviderFactories: testAccProtoV6ProviderFactories, Steps: steps})
+				woStep := func(secret, version string, plan resource.ConfigPlanChecks, stored string) resource.TestStep {
+					return resource.TestStep{
+						Config:           settingsSecretsConfig(endpoint, kind, secret, version),
+						ConfigPlanChecks: plan,
+						Check:            resource.ComposeTestCheckFunc(append(slices.Clone(noPlainSecrets), expectStored(api, kind, stored))...),
+					}
+				}
+				// Every step also fails if the refresh after apply plans a change.
+				steps := []resource.TestStep{
+					{Config: settingsSecretsConfig(endpoint, kind, "plain-1", ""), Check: expectStored(api, kind, "plain-1")},
+					{Config: settingsSecretsConfig(endpoint, kind, "plain-2", ""), ConfigPlanChecks: update, Check: expectStored(api, kind, "plain-2")},
+					woStep("wo-1", "1", update, "wo-1"),
+					// Terraform keeps no copy of a write-only value, so only the version triggers a write.
+					woStep("wo-2", "1", resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()}}, "wo-1"),
+					woStep("wo-2", "2", update, "wo-2"),
+				}
+				if kind == "risk_engine" {
+					steps[0].Check = resource.ComposeTestCheckFunc(steps[0].Check, resource.TestCheckResourceAttr(address, "remote_plugins.0.uuid", "uuid-1"))
+				}
+				resource.UnitTest(t, resource.TestCase{ProtoV6ProviderFactories: testAccProtoV6ProviderFactories, Steps: steps})
+			})
+		}
+	}
+}
+
+// A plugin saved before Workshop assigned UUIDs has none in state. Read must
+// still find its secret, before and after Workshop assigns the UUID.
+func TestSettingsSecretsPluginWithoutUUID(t *testing.T) {
+	t.Setenv("WORKSHOP_API_KEY", "")
+	for _, returnSecrets := range []bool{false, true} {
+		t.Run(fmt.Sprintf("returnSecrets=%t", returnSecrets), func(t *testing.T) {
+			api := &settingsSecretServer{returnSecrets: returnSecrets}
+			endpoint := startSettingsSecretServer(t, api)
+			address := "nps_workshop_settings_risk_engine.test"
+			config := settingsSecretsConfig(endpoint, "risk_engine", "plain-1", "")
+			resource.UnitTest(t, resource.TestCase{ProtoV6ProviderFactories: testAccProtoV6ProviderFactories, Steps: []resource.TestStep{
+				{Config: config, Check: resource.TestCheckNoResourceAttr(address, "remote_plugins.0.uuid")},
+				{
+					PreConfig: func() {
+						api.mu.Lock()
+						defer api.mu.Unlock()
+						api.fillUUIDs()
+					},
+					Config:           config,
+					ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()}},
+					Check: resource.ComposeTestCheckFunc(
+						resource.TestCheckResourceAttr(address, "remote_plugins.0.uuid", "uuid-1"),
+						resource.TestCheckResourceAttr(address, "remote_plugins.0.secret", "plain-1"),
+					),
+				},
+			}})
 		})
 	}
 }
 
-func settingsSecretsConfig(endpoint, kind, secret string) string {
+// settingsSecretsConfig sets every secret of kind to secret. A non-empty
+// version uses the write-only attributes with that version.
+func settingsSecretsConfig(endpoint, kind, secret, version string) string {
 	provider := fmt.Sprintf("provider \"nps\" {\n endpoint = %q\n api_key = \"test-key\"\n}\n", endpoint)
+	attr := func(name string) string {
+		if version != "" {
+			return fmt.Sprintf("%s_wo = %q", name, secret)
+		}
+		return fmt.Sprintf("%s = %q", name, secret)
+	}
 	var body string
+	if version != "" && kind != "webhooks" {
+		body = fmt.Sprintf("secrets_wo_version = %q\n", version)
+	}
 	switch kind {
 	case "chat":
-		body = fmt.Sprintf(`slack = {
- token = %[1]q
- hmac_signing_secret = %[1]q
-}`, secret)
+		body += fmt.Sprintf("slack = {\n %s\n %s\n}\n", attr("token"), attr("hmac_signing_secret"))
 	case "risk_engine":
-		body = fmt.Sprintf(`local_plugins = {
- virus_total = { api_key = %[1]q }
- reversing_labs = { password = %[1]q }
+		body += fmt.Sprintf(`local_plugins = {
+ virus_total = { %s }
+ reversing_labs = { %s }
 }
 remote_plugins = [{
  name = "plugin"
- uuid = "00000000-0000-4000-8000-000000000001"
  version = "1"
  url = "https://example.invalid/plugin"
  ttl = "5s"
- secret = %[1]q
- headers = [{ key = "Authorization", value = %[1]q }]
-}]`, secret)
+ %s
+ headers = [{ key = "Authorization", %s }]
+}]
+`, attr("api_key"), attr("password"), attr("secret"), attr("value"))
 	case "webhooks":
+		versionLine := ""
+		if version != "" {
+			versionLine = fmt.Sprintf("secret_wo_version = %q", version)
+		}
 		for _, name := range []string{"audit_events", "signal_reports", "software_approvals"} {
-			body += fmt.Sprintf("%s = {\n headers = [{ key = \"Authorization\", value = %q }]\n}\n", name, secret)
+			body += fmt.Sprintf("%s = {\n %s\n headers = [{ key = \"Authorization\", %s }]\n}\n", name, versionLine, attr("value"))
 		}
 	}
-	return provider + fmt.Sprintf("resource \"nps_workshop_settings_%s\" \"test\" {\n%s\n}\n", kind, body)
-}
-
-func TestSettingsSecretsUseAPIReferences(t *testing.T) {
-	ctx := t.Context()
-	chatPrior, diags := chatProtoToModel(ctx, apipb.SlackBotSettings_builder{
-		Token: proto.String("old-token"), HmacSigningSecret: proto.String("old-signing-secret"),
-	}.Build(), ChatSettingsResourceModel{})
-	if diags.HasError() {
-		t.Fatal(diags)
-	}
-	riskSettings := func(secret string) *apipb.RiskEngineSettings {
-		return apipb.RiskEngineSettings_builder{
-			LocalPlugins: apipb.LocalPluginSettings_builder{
-				VirusTotal:    apipb.VirusTotalPluginSettings_builder{ApiKey: proto.String(secret)}.Build(),
-				ReversingLabs: apipb.ReversingLabsPluginSettings_builder{Password: proto.String(secret)}.Build(),
-			}.Build(),
-			RemotePlugins: []*apipb.RemoteRiskEnginePluginSettings{
-				apipb.RemoteRiskEnginePluginSettings_builder{Uuid: proto.String("plugin-a"), Secret: proto.String(secret), Headers: []*apipb.HTTPHeader{apipb.HTTPHeader_builder{Key: "Authorization", Value: secret}.Build()}}.Build(),
-			},
-		}.Build()
-	}
-	riskPrior, diags := riskEngineProtoToModel(ctx, riskSettings("old-secret"), RiskEngineSettingsResourceModel{})
-	if diags.HasError() {
-		t.Fatal(diags)
-	}
-	webhookSettings := func(secret string) *apipb.WebhookSettings {
-		return apipb.WebhookSettings_builder{SoftwareApprovals: apipb.WebhookSoftwareApprovalConfig_builder{Basic: apipb.WebhookBasicConfig_builder{
-			Headers: []*apipb.HTTPHeader{apipb.HTTPHeader_builder{Key: "Authorization", Value: secret}.Build()},
-		}.Build()}.Build()}.Build()
-	}
-	webhookPrior, diags := webhookProtoToModel(ctx, webhookSettings("old-secret"), WebhookSettingsResourceModel{})
-	if diags.HasError() {
-		t.Fatal(diags)
-	}
-	for _, reference := range []string{"gcp://project/secret", "aws://secret"} {
-		t.Run(reference, func(t *testing.T) {
-			chat, diags := chatProtoToModel(ctx, apipb.SlackBotSettings_builder{Token: proto.String(reference), HmacSigningSecret: proto.String(reference)}.Build(), chatPrior)
-			if diags.HasError() {
-				t.Fatal(diags)
-			}
-			chatAPI, diags := chatSlackFromObject(ctx, chat.Slack)
-			if diags.HasError() {
-				t.Fatal(diags)
-			}
-			risk, diags := riskEngineProtoToModel(ctx, riskSettings(reference), riskPrior)
-			if diags.HasError() {
-				t.Fatal(diags)
-			}
-			riskAPI, diags := riskEngineModelToProto(ctx, &risk)
-			if diags.HasError() {
-				t.Fatal(diags)
-			}
-			webhook, diags := webhookProtoToModel(ctx, webhookSettings(reference), webhookPrior)
-			if diags.HasError() {
-				t.Fatal(diags)
-			}
-			webhookAPI, diags := webhookSettingsToProto(ctx, webhook)
-			if diags.HasError() {
-				t.Fatal(diags)
-			}
-			values := map[string]string{
-				"Slack token":            chatAPI.GetToken(),
-				"Slack signing secret":   chatAPI.GetHmacSigningSecret(),
-				"VirusTotal API key":     riskAPI.GetLocalPlugins().GetVirusTotal().GetApiKey(),
-				"ReversingLabs password": riskAPI.GetLocalPlugins().GetReversingLabs().GetPassword(),
-				"remote plugin secret":   riskAPI.GetRemotePlugins()[0].GetSecret(),
-				"remote plugin header":   riskAPI.GetRemotePlugins()[0].GetHeaders()[0].GetValue(),
-				"webhook header":         webhookAPI.GetSoftwareApprovals().GetBasic().GetHeaders()[0].GetValue(),
-			}
-			for name, got := range values {
-				if got != reference {
-					t.Errorf("%s: API reference must replace prior secret: got %q, want %q", name, got, reference)
-				}
-			}
-		})
-	}
-}
-
-func TestSettingsSecretsMatchPluginUUIDsAndHeaderKeys(t *testing.T) {
-	ctx := t.Context()
-	header := func(key, value string) *apipb.HTTPHeader {
-		return apipb.HTTPHeader_builder{Key: key, Value: value}.Build()
-	}
-	plugin := func(id, secret string, headers ...*apipb.HTTPHeader) *apipb.RemoteRiskEnginePluginSettings {
-		return apipb.RemoteRiskEnginePluginSettings_builder{Uuid: proto.String(id), Secret: proto.String(secret), Headers: headers}.Build()
-	}
-	prior, diags := riskEngineProtoToModel(ctx, apipb.RiskEngineSettings_builder{RemotePlugins: []*apipb.RemoteRiskEnginePluginSettings{
-		plugin("a", "secret-a", header("Authorization", "auth-a"), header("X-Token", "token-a")),
-		plugin("b", "secret-b", header("Authorization", "auth-b")),
-	}}.Build(), RiskEngineSettingsResourceModel{})
-	if diags.HasError() {
-		t.Fatal(diags)
-	}
-	got, diags := riskEngineProtoToModel(ctx, apipb.RiskEngineSettings_builder{RemotePlugins: []*apipb.RemoteRiskEnginePluginSettings{
-		plugin("b", "", header("authorization", "")),
-		plugin("a", "", header("x-token", ""), header("AUTHORIZATION", ""), header("X-New", "")),
-		plugin("new", "", header("Authorization", "")),
-	}}.Build(), prior)
-	if diags.HasError() {
-		t.Fatal(diags)
-	}
-	api, diags := riskEngineModelToProto(ctx, &got)
-	if diags.HasError() {
-		t.Fatal(diags)
-	}
-	plugins := api.GetRemotePlugins()
-	values := []struct{ name, got, want string }{
-		{"reordered plugin b", plugins[0].GetSecret(), "secret-b"},
-		{"plugin b header", plugins[0].GetHeaders()[0].GetValue(), "auth-b"},
-		{"reordered plugin a", plugins[1].GetSecret(), "secret-a"},
-		{"reordered mixed-case token header", plugins[1].GetHeaders()[0].GetValue(), "token-a"},
-		{"mixed-case authorization header", plugins[1].GetHeaders()[1].GetValue(), "auth-a"},
-		{"new header", plugins[1].GetHeaders()[2].GetValue(), ""},
-		{"new plugin secret", plugins[2].GetSecret(), ""},
-		{"new plugin header", plugins[2].GetHeaders()[0].GetValue(), ""},
-	}
-	for _, value := range values {
-		if value.got != value.want {
-			t.Errorf("%s: got %q, want %q", value.name, value.got, value.want)
-		}
-	}
-
-	unknownAttributes := prior.RemotePlugins.Elements()[0].(types.Object).Attributes()
-	unknownAttributes["uuid"] = types.StringUnknown()
-	appliedPlan := prior
-	appliedPlan.RemotePlugins = types.ListValueMust(riskRemotePluginObjectType, []attr.Value{types.ObjectValueMust(riskRemotePluginAttrTypes, unknownAttributes)})
-	assigned, diags := riskEngineProtoToModel(ctx, apipb.RiskEngineSettings_builder{RemotePlugins: []*apipb.RemoteRiskEnginePluginSettings{
-		plugin("assigned-id", "", header("Authorization", ""), header("X-Token", "")),
-	}}.Build(), appliedPlan)
-	if diags.HasError() {
-		t.Fatal(diags)
-	}
-	assignedAPI, diags := riskEngineModelToProto(ctx, &assigned)
-	if diags.HasError() {
-		t.Fatal(diags)
-	}
-	assignedPlugin := assignedAPI.GetRemotePlugins()[0]
-	if assignedPlugin.GetUuid() != "assigned-id" || assignedPlugin.GetSecret() != "secret-a" || assignedPlugin.GetHeaders()[0].GetValue() != "auth-a" || assignedPlugin.GetHeaders()[1].GetValue() != "token-a" {
-		t.Errorf("new plugin keeps applied secrets after UUID assignment: got %v", assignedPlugin)
-	}
-	webhookSettings := func(headers ...*apipb.HTTPHeader) *apipb.WebhookSettings {
-		return apipb.WebhookSettings_builder{SoftwareApprovals: apipb.WebhookSoftwareApprovalConfig_builder{Basic: apipb.WebhookBasicConfig_builder{Headers: headers}.Build()}.Build()}.Build()
-	}
-	webhookPrior, diags := webhookProtoToModel(ctx, webhookSettings(header("Authorization", "auth"), header("X-Token", "token")), WebhookSettingsResourceModel{})
-	if diags.HasError() {
-		t.Fatal(diags)
-	}
-	webhook, diags := webhookProtoToModel(ctx, webhookSettings(header("x-token", ""), header("AUTHORIZATION", ""), header("X-New", "")), webhookPrior)
-	if diags.HasError() {
-		t.Fatal(diags)
-	}
-	webhookAPI, diags := webhookSettingsToProto(ctx, webhook)
-	if diags.HasError() {
-		t.Fatal(diags)
-	}
-	for i, want := range []string{"token", "auth", ""} {
-		if got := webhookAPI.GetSoftwareApprovals().GetBasic().GetHeaders()[i].GetValue(); got != want {
-			t.Errorf("webhook header %d: got %q, want %q", i, got, want)
-		}
-	}
+	return provider + fmt.Sprintf("resource \"nps_workshop_settings_%s\" \"test\" {\n%s}\n", kind, body)
 }

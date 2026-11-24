@@ -75,13 +75,15 @@ type webhookSoftwareModel struct {
 }
 
 type webhookHeaderModel struct {
-	Key   types.String `tfsdk:"key"`
-	Value types.String `tfsdk:"value"`
+	Key     types.String `tfsdk:"key"`
+	Value   types.String `tfsdk:"value"`
+	ValueWo types.String `tfsdk:"value_wo"`
 }
 
 var webhookHeaderAttrTypes = map[string]attr.Type{
-	"key":   types.StringType,
-	"value": types.StringType,
+	"key":      types.StringType,
+	"value":    types.StringType,
+	"value_wo": types.StringType,
 }
 
 var webhookHeadersListType = types.ListType{ElemType: types.ObjectType{AttrTypes: webhookHeaderAttrTypes}}
@@ -154,8 +156,9 @@ func webhookBasicAttributes(extra map[string]schema.Attribute) map[string]schema
 			Optional:            true,
 			NestedObject: schema.NestedAttributeObject{
 				Attributes: map[string]schema.Attribute{
-					"key":   schema.StringAttribute{Required: true},
-					"value": schema.StringAttribute{Required: true, Sensitive: true},
+					"key":      schema.StringAttribute{Required: true},
+					"value":    headerValueAttribute(),
+					"value_wo": writeOnlySecretAttribute("value", "secret_wo_version"),
 				},
 			},
 		},
@@ -270,7 +273,8 @@ func (r *WebhookSettingsResource) apply(ctx context.Context, config tfsdk.Config
 }
 
 func (r *WebhookSettingsResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
-	// Keep redacted secrets from prior state to prevent refresh drift.
+	// The server never returns secrets, so carry them over from prior state to
+	// avoid perpetual diffs on the (non-write-only) secret attribute.
 	var prior WebhookSettingsResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &prior)...)
 	if resp.Diagnostics.HasError() {
@@ -397,7 +401,7 @@ func webhookBasicToProto(ctx context.Context, enabled types.Bool, url, secret, s
 		diags.Append(headers.ElementsAs(ctx, &hms, false)...)
 		hdrs = make([]*apipb.HTTPHeader, len(hms))
 		for i, hm := range hms {
-			hdrs[i] = apipb.HTTPHeader_builder{Key: hm.Key.ValueString(), Value: hm.Value.ValueString()}.Build()
+			hdrs[i] = apipb.HTTPHeader_builder{Key: hm.Key.ValueString(), Value: headerValueForWrite(hm.Value, hm.ValueWo)}.Build()
 		}
 	}
 
@@ -534,7 +538,7 @@ func webhookBasicValues(ctx context.Context, b *apipb.WebhookBasicConfig, prior 
 	if b != nil && len(b.GetHeaders()) > 0 {
 		hms := make([]webhookHeaderModel, len(b.GetHeaders()))
 		for i, h := range b.GetHeaders() {
-			hms[i] = webhookHeaderModel{Key: types.StringValue(h.GetKey()), Value: headerValueToTF(h.GetKey(), h.GetValue(), priorHeaders(prior))}
+			hms[i] = webhookHeaderModel{Key: types.StringValue(h.GetKey()), Value: priorHeaderValue(h.GetKey(), priorHeaders(prior)), ValueWo: types.StringNull()}
 		}
 		l, d := types.ListValueFrom(ctx, webhookHeaderAttrTypesObject(), hms)
 		diags.Append(d...)
@@ -543,7 +547,7 @@ func webhookBasicValues(ctx context.Context, b *apipb.WebhookBasicConfig, prior 
 	return map[string]attr.Value{
 		"enabled":           boolPtrToTF(basicEnabled(b)),
 		"url":               stringPtrToTF(basicUrl(b)),
-		"secret":            priorString(prior, "secret"),            // secret_wo must stay out of state
+		"secret":            priorString(prior, "secret"),            // server never returns it
 		"secret_wo":         types.StringNull(),                      // write-only: never in state
 		"secret_wo_version": priorString(prior, "secret_wo_version"), // server doesn't track it
 		"headers":           headers,

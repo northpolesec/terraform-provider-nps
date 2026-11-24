@@ -3,11 +3,16 @@ package provider
 
 import (
 	"context"
+	"fmt"
 	"regexp"
 	"strings"
 	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/path"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"google.golang.org/protobuf/types/known/durationpb"
 )
@@ -34,24 +39,67 @@ func stringPtrToTF(v *string) types.String {
 	return types.StringValue(*v)
 }
 
-// Empty API secrets are redacted. Keep the applied value to prevent refresh drift.
-func secretStringToTF(value *string, prior types.String) types.String {
-	if value == nil || *value == "" {
-		return prior
-	}
-	return types.StringValue(*value)
-}
-
-func headerValueToTF(key, value string, prior types.List) types.String {
-	if value == "" {
-		for _, element := range prior.Elements() {
-			header := element.(types.Object)
-			if strings.EqualFold(key, priorString(header, "key").ValueString()) {
-				return priorString(header, "value")
-			}
+// priorHeaderValue returns the prior-state value of the header with this key.
+// Read never copies header values from the API: they are secrets.
+func priorHeaderValue(key string, prior types.List) types.String {
+	for _, element := range prior.Elements() {
+		header := element.(types.Object)
+		if strings.EqualFold(key, priorString(header, "key").ValueString()) {
+			return priorString(header, "value")
 		}
 	}
-	return types.StringValue(value)
+	return types.StringNull()
+}
+
+// writeOnlySecretAttribute is the write-only replacement of the plain secret
+// attribute named plain. Writes send it every time; version only triggers them.
+func writeOnlySecretAttribute(plain, version string) schema.StringAttribute {
+	const text = "Write-only variant of %[1]s: Terraform sends it on every write and never stores it in state. Requires Terraform 1.11 or later. Conflicts with %[1]s. Terraform cannot detect a change to this value, so change %[2]s to send a new one. An empty value keeps the stored secret: a version change cannot clear it. Import cannot recover it."
+	return schema.StringAttribute{
+		Description:         fmt.Sprintf(text, plain, version),
+		MarkdownDescription: fmt.Sprintf(text, "`"+plain+"`", "`"+version+"`"),
+		Optional:            true,
+		Sensitive:           true,
+		WriteOnly:           true,
+		Validators:          []validator.String{stringvalidator.ConflictsWith(path.MatchRelative().AtParent().AtName(plain))},
+	}
+}
+
+// writeOnlyVersionAttribute triggers a write of the named write-only attributes.
+func writeOnlyVersionAttribute(attributes string) schema.StringAttribute {
+	const text = "Change this value to send new values of %s. Terraform keeps no copy of write-only values, so it cannot detect a change to them."
+	return schema.StringAttribute{
+		Description:         fmt.Sprintf(text, attributes),
+		MarkdownDescription: fmt.Sprintf(text, attributes),
+		Optional:            true,
+	}
+}
+
+// headerValueAttribute is the plain value of a header that also has value_wo.
+func headerValueAttribute() schema.StringAttribute {
+	return schema.StringAttribute{
+		Description:         "HTTP header value. Stored in Terraform state. Set exactly one of value or value_wo.",
+		MarkdownDescription: "HTTP header value. Stored in Terraform state. Set exactly one of `value` or `value_wo`.",
+		Optional:            true,
+		Sensitive:           true,
+		DeprecationMessage:  "Use value_wo, which keeps the header value out of Terraform state.",
+		Validators:          []validator.String{stringvalidator.AtLeastOneOf(path.MatchRelative().AtParent().AtName("value_wo"))},
+	}
+}
+
+func headerValueForWrite(value, wo types.String) string {
+	if v := withWriteOnly(tfStringToPtr(value), wo); v != nil {
+		return *v
+	}
+	return ""
+}
+
+// withWriteOnly returns the configured write-only value when it is set, else value.
+func withWriteOnly(value *string, wo types.String) *string {
+	if wo.IsNull() || wo.IsUnknown() {
+		return value
+	}
+	return tfStringToPtr(wo)
 }
 
 func tfStringToPtr(v types.String) *string {

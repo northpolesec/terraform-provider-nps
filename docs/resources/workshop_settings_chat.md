@@ -29,6 +29,7 @@ resource "nps_workshop_settings_chat" "settings" {
 
 ### Optional
 
+- `secrets_wo_version` (String) Change this value to send new values of token_wo and hmac_signing_secret_wo. Terraform keeps no copy of write-only values, so it cannot detect a change to them.
 - `slack` (Attributes) Slack bot integration settings. Setting this configures the Slack chat type. (see [below for nested schema](#nestedatt--slack))
 
 <a id="nestedatt--slack"></a>
@@ -37,8 +38,10 @@ resource "nps_workshop_settings_chat" "settings" {
 Optional:
 
 - `enabled` (Boolean) Whether the Slack bot is enabled.
-- `hmac_signing_secret` (String, Sensitive) The HMAC signing secret for the Slack bot. Sensitive.
-- `token` (String, Sensitive) The Slack token for the bot to connect to the workspace. Sensitive.
+- `hmac_signing_secret` (String, Sensitive, Deprecated) The HMAC signing secret for the Slack bot. Sensitive. Stored in Terraform state. Conflicts with `hmac_signing_secret_wo`.
+- `hmac_signing_secret_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Write-only variant of `hmac_signing_secret`: Terraform sends it on every write and never stores it in state. Requires Terraform 1.11 or later. Conflicts with `hmac_signing_secret`. Terraform cannot detect a change to this value, so change `secrets_wo_version` to send a new one. An empty value keeps the stored secret: a version change cannot clear it. Import cannot recover it.
+- `token` (String, Sensitive, Deprecated) The Slack token for the bot to connect to the workspace. Sensitive. Stored in Terraform state. Conflicts with `token_wo`.
+- `token_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Write-only variant of `token`: Terraform sends it on every write and never stores it in state. Requires Terraform 1.11 or later. Conflicts with `token`. Terraform cannot detect a change to this value, so change `secrets_wo_version` to send a new one. An empty value keeps the stored secret: a version change cannot clear it. Import cannot recover it.
 - `url_redirect_cookie` (String) URL redirect cookie name.
 - `use_emojis` (Boolean) Whether to use emojis in Slack messages.
 - `workspace` (String) The Slack workspace to connect to.

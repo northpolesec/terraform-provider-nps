@@ -76,7 +76,11 @@ Optional:
 Required:
 
 - `key` (String)
-- `value` (String, Sensitive)
+
+Optional:
+
+- `value` (String, Sensitive, Deprecated) HTTP header value. Stored in Terraform state. Set exactly one of `value` or `value_wo`.
+- `value_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Write-only variant of `value`: Terraform sends it on every write and never stores it in state. Requires Terraform 1.11 or later. Conflicts with `value`. Terraform cannot detect a change to this value, so change `secret_wo_version` to send a new one. An empty value keeps the stored secret: a version change cannot clear it. Import cannot recover it.
 
 
 
@@ -99,7 +103,11 @@ Optional:
 Required:
 
 - `key` (String)
-- `value` (String, Sensitive)
+
+Optional:
+
+- `value` (String, Sensitive, Deprecated) HTTP header value. Stored in Terraform state. Set exactly one of `value` or `value_wo`.
+- `value_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Write-only variant of `value`: Terraform sends it on every write and never stores it in state. Requires Terraform 1.11 or later. Conflicts with `value`. Terraform cannot detect a change to this value, so change `secret_wo_version` to send a new one. An empty value keeps the stored secret: a version change cannot clear it. Import cannot recover it.
 
 
 
@@ -121,7 +129,11 @@ Optional:
 Required:
 
 - `key` (String)
-- `value` (String, Sensitive)
+
+Optional:
+
+- `value` (String, Sensitive, Deprecated) HTTP header value. Stored in Terraform state. Set exactly one of `value` or `value_wo`.
+- `value_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Write-only variant of `value`: Terraform sends it on every write and never stores it in state. Requires Terraform 1.11 or later. Conflicts with `value`. Terraform cannot detect a change to this value, so change `secret_wo_version` to send a new one. An empty value keeps the stored secret: a version change cannot clear it. Import cannot recover it.
 
 ## Import
 

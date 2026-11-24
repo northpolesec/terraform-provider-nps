@@ -7,9 +7,11 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/identityschema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
@@ -36,25 +38,30 @@ type ChatSettingsIdentityModel struct {
 }
 
 type ChatSettingsResourceModel struct {
-	Slack types.Object `tfsdk:"slack"`
+	Slack            types.Object `tfsdk:"slack"`
+	SecretsWoVersion types.String `tfsdk:"secrets_wo_version"`
 }
 
 type ChatSettingsSlackModel struct {
-	Enabled           types.Bool   `tfsdk:"enabled"`
-	Token             types.String `tfsdk:"token"`
-	Workspace         types.String `tfsdk:"workspace"`
-	UseEmojis         types.Bool   `tfsdk:"use_emojis"`
-	HmacSigningSecret types.String `tfsdk:"hmac_signing_secret"`
-	UrlRedirectCookie types.String `tfsdk:"url_redirect_cookie"`
+	Enabled             types.Bool   `tfsdk:"enabled"`
+	Token               types.String `tfsdk:"token"`
+	TokenWo             types.String `tfsdk:"token_wo"`
+	Workspace           types.String `tfsdk:"workspace"`
+	UseEmojis           types.Bool   `tfsdk:"use_emojis"`
+	HmacSigningSecret   types.String `tfsdk:"hmac_signing_secret"`
+	HmacSigningSecretWo types.String `tfsdk:"hmac_signing_secret_wo"`
+	UrlRedirectCookie   types.String `tfsdk:"url_redirect_cookie"`
 }
 
 var chatSlackObjectAttrTypes = map[string]attr.Type{
-	"enabled":             types.BoolType,
-	"token":               types.StringType,
-	"workspace":           types.StringType,
-	"use_emojis":          types.BoolType,
-	"hmac_signing_secret": types.StringType,
-	"url_redirect_cookie": types.StringType,
+	"enabled":                types.BoolType,
+	"token":                  types.StringType,
+	"token_wo":               types.StringType,
+	"workspace":              types.StringType,
+	"use_emojis":             types.BoolType,
+	"hmac_signing_secret":    types.StringType,
+	"hmac_signing_secret_wo": types.StringType,
+	"url_redirect_cookie":    types.StringType,
 }
 
 func (r *ChatSettingsResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -78,11 +85,13 @@ func (r *ChatSettingsResource) Schema(ctx context.Context, req resource.SchemaRe
 						Optional:            true,
 					},
 					"token": schema.StringAttribute{
-						Description:         "The Slack token for the bot to connect to the workspace. Sensitive.",
-						MarkdownDescription: "The Slack token for the bot to connect to the workspace. Sensitive.",
+						Description:         "The Slack token for the bot to connect to the workspace. Sensitive. Stored in Terraform state. Conflicts with token_wo.",
+						MarkdownDescription: "The Slack token for the bot to connect to the workspace. Sensitive. Stored in Terraform state. Conflicts with `token_wo`.",
 						Optional:            true,
 						Sensitive:           true,
+						DeprecationMessage:  "Use token_wo, which keeps the token out of Terraform state.",
 					},
+					"token_wo": writeOnlySecretAttribute("token", "secrets_wo_version"),
 					"workspace": schema.StringAttribute{
 						Description:         "The Slack workspace to connect to.",
 						MarkdownDescription: "The Slack workspace to connect to.",
@@ -94,11 +103,13 @@ func (r *ChatSettingsResource) Schema(ctx context.Context, req resource.SchemaRe
 						Optional:            true,
 					},
 					"hmac_signing_secret": schema.StringAttribute{
-						Description:         "The HMAC signing secret for the Slack bot. Sensitive.",
-						MarkdownDescription: "The HMAC signing secret for the Slack bot. Sensitive.",
+						Description:         "The HMAC signing secret for the Slack bot. Sensitive. Stored in Terraform state. Conflicts with hmac_signing_secret_wo.",
+						MarkdownDescription: "The HMAC signing secret for the Slack bot. Sensitive. Stored in Terraform state. Conflicts with `hmac_signing_secret_wo`.",
 						Optional:            true,
 						Sensitive:           true,
+						DeprecationMessage:  "Use hmac_signing_secret_wo, which keeps the secret out of Terraform state.",
 					},
+					"hmac_signing_secret_wo": writeOnlySecretAttribute("hmac_signing_secret", "secrets_wo_version"),
 					"url_redirect_cookie": schema.StringAttribute{
 						Description:         "URL redirect cookie name.",
 						MarkdownDescription: "URL redirect cookie name.",
@@ -106,6 +117,7 @@ func (r *ChatSettingsResource) Schema(ctx context.Context, req resource.SchemaRe
 					},
 				},
 			},
+			"secrets_wo_version": writeOnlyVersionAttribute("token_wo and hmac_signing_secret_wo"),
 		},
 	}
 }
@@ -133,7 +145,7 @@ func (r *ChatSettingsResource) Create(ctx context.Context, req resource.CreateRe
 		return
 	}
 
-	slack, d := chatSlackFromObject(ctx, data.Slack)
+	slack, d := chatSlackForWrite(ctx, data.Slack, req.Config)
 	resp.Diagnostics.Append(d...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -187,7 +199,7 @@ func (r *ChatSettingsResource) Update(ctx context.Context, req resource.UpdateRe
 	// UpdateChatSettings replaces the chat type via oneof. If the plan has
 	// no slack block but the state did, we delete; otherwise we push the
 	// plan's slack block.
-	planSlack, d := chatSlackFromObject(ctx, plan.Slack)
+	planSlack, d := chatSlackForWrite(ctx, plan.Slack, req.Config)
 	resp.Diagnostics.Append(d...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -226,7 +238,8 @@ func (r *ChatSettingsResource) Delete(ctx context.Context, req resource.DeleteRe
 
 func (r *ChatSettingsResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resp.Diagnostics.Append(resp.State.Set(ctx, &ChatSettingsResourceModel{
-		Slack: types.ObjectNull(chatSlackObjectAttrTypes),
+		Slack:            types.ObjectNull(chatSlackObjectAttrTypes),
+		SecretsWoVersion: types.StringNull(),
 	})...)
 }
 
@@ -243,18 +256,37 @@ func (r *ChatSettingsResource) IdentitySchema(ctx context.Context, req resource.
 func chatProtoToModel(ctx context.Context, s *apipb.SlackBotSettings, prior ChatSettingsResourceModel) (ChatSettingsResourceModel, diag.Diagnostics) {
 	if s == nil {
 		return ChatSettingsResourceModel{
-			Slack: types.ObjectNull(chatSlackObjectAttrTypes),
+			Slack:            types.ObjectNull(chatSlackObjectAttrTypes),
+			SecretsWoVersion: prior.SecretsWoVersion,
 		}, nil
 	}
+	// Secrets come from prior state only, so an API that returns them cannot put
+	// them in state, and one that redacts them causes no drift.
 	obj, d := types.ObjectValue(chatSlackObjectAttrTypes, map[string]attr.Value{
-		"enabled":             boolPtrToTF(s.Enabled),
-		"token":               secretStringToTF(s.Token, priorString(prior.Slack, "token")),
-		"workspace":           stringPtrToTF(s.Workspace),
-		"use_emojis":          boolPtrToTF(s.UseEmojis),
-		"hmac_signing_secret": secretStringToTF(s.HmacSigningSecret, priorString(prior.Slack, "hmac_signing_secret")),
-		"url_redirect_cookie": stringPtrToTF(s.UrlRedirectCookie),
+		"enabled":                boolPtrToTF(s.Enabled),
+		"token":                  priorString(prior.Slack, "token"),
+		"token_wo":               types.StringNull(),
+		"workspace":              stringPtrToTF(s.Workspace),
+		"use_emojis":             boolPtrToTF(s.UseEmojis),
+		"hmac_signing_secret":    priorString(prior.Slack, "hmac_signing_secret"),
+		"hmac_signing_secret_wo": types.StringNull(),
+		"url_redirect_cookie":    stringPtrToTF(s.UrlRedirectCookie),
 	})
-	return ChatSettingsResourceModel{Slack: obj}, d
+	return ChatSettingsResourceModel{Slack: obj, SecretsWoVersion: prior.SecretsWoVersion}, d
+}
+
+// chatSlackForWrite builds the request from the plan and adds the write-only
+// secrets, which only the config carries.
+func chatSlackForWrite(ctx context.Context, plan types.Object, config tfsdk.Config) (*apipb.SlackBotSettings, diag.Diagnostics) {
+	slack, diags := chatSlackFromObject(ctx, plan)
+	if slack == nil || diags.HasError() {
+		return slack, diags
+	}
+	var cfg ChatSettingsSlackModel
+	diags.Append(config.GetAttribute(ctx, path.Root("slack"), &cfg)...)
+	slack.Token = withWriteOnly(slack.Token, cfg.TokenWo)
+	slack.HmacSigningSecret = withWriteOnly(slack.HmacSigningSecret, cfg.HmacSigningSecretWo)
+	return slack, diags
 }
 
 func chatSlackFromObject(ctx context.Context, obj types.Object) (*apipb.SlackBotSettings, diag.Diagnostics) {
