@@ -17,6 +17,6 @@ jobs:
       pull-requests: write
     steps:
       - name: Apply Size Labels
-        uses: codelytv/pr-size-labeler@1c3422395d899286d5ee2c809fd5aed264d5eb9b # ratchet:codelytv/pr-size-labeler@v1.10.2
+        uses: codelytv/pr-size-labeler@19c335e7695ba922de938806dd129f0a9b992644 # ratchet:codelytv/pr-size-labeler@v1.12.0
         with:
           files_to_ignore: 'go.sum'

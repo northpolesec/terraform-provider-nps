@@ -12,17 +12,17 @@ jobs:
       GOPRIVATE: buf.build/gen/go
     steps:
       - name: Checkout
-        uses: actions/checkout@eef61447b9ff4aafe5dcd4e0bbf5d482be7e7871 # ratchet:actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # ratchet:actions/checkout@v4
 
       - name: Install buf
-        uses: bufbuild/buf-setup-action@9672cee01808979ea1249f81d6d321217b9a10f6 # ratchet:bufbuild/buf-setup-action@v1
+        uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99 # ratchet:bufbuild/buf-setup-action@v1
         with:
           version: "1.47.2"
           buf_user: ${{ secrets.BUF_USER }}
           buf_api_token: ${{ secrets.BUF_TOKEN }}
 
       - name: Install Go
-        uses: actions/setup-go@0a12ed9d6a96ab950c8f026ed9f722fe0da7ef32 # ratchet:actions/setup-go@v5
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # ratchet:actions/setup-go@v5
         with:
           go-version-file: 'go.mod'
 
