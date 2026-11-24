@@ -293,13 +293,13 @@ func (r *RiskEngineSettingsResource) Configure(ctx context.Context, req resource
 // rules and remote_plugins: the plan carries an unknown for every entry the
 // user did not pin, and the proto requires that the server-assigned UUID be
 // echoed back on later writes to keep rule identity stable.
-func (r *RiskEngineSettingsResource) fetchRiskEngineSettings(ctx context.Context, diags *diag.Diagnostics) (RiskEngineSettingsResourceModel, bool) {
+func (r *RiskEngineSettingsResource) fetchRiskEngineSettings(ctx context.Context, prior RiskEngineSettingsResourceModel, diags *diag.Diagnostics) (RiskEngineSettingsResourceModel, bool) {
 	ret, err := r.client.GetRiskEngineSettings(ctx, apipb.GetRiskEngineSettingsRequest_builder{}.Build())
 	if err != nil {
 		diags.AddError("Client Error", fmt.Sprintf("Failed to get risk engine settings: %v", err))
 		return RiskEngineSettingsResourceModel{}, false
 	}
-	data, d := riskEngineProtoToModel(ctx, ret.GetRiskEngineSettings())
+	data, d := riskEngineProtoToModel(ctx, ret.GetRiskEngineSettings(), prior)
 	diags.Append(d...)
 	if diags.HasError() {
 		return RiskEngineSettingsResourceModel{}, false
@@ -325,7 +325,7 @@ func (r *RiskEngineSettingsResource) Create(ctx context.Context, req resource.Cr
 		return
 	}
 
-	final, ok := r.fetchRiskEngineSettings(ctx, &resp.Diagnostics)
+	final, ok := r.fetchRiskEngineSettings(ctx, data, &resp.Diagnostics)
 	if !ok {
 		return
 	}
@@ -337,7 +337,12 @@ func (r *RiskEngineSettingsResource) Create(ctx context.Context, req resource.Cr
 }
 
 func (r *RiskEngineSettingsResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
-	data, ok := r.fetchRiskEngineSettings(ctx, &resp.Diagnostics)
+	var prior RiskEngineSettingsResourceModel
+	resp.Diagnostics.Append(req.State.Get(ctx, &prior)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	data, ok := r.fetchRiskEngineSettings(ctx, prior, &resp.Diagnostics)
 	if !ok {
 		return
 	}
@@ -368,7 +373,7 @@ func (r *RiskEngineSettingsResource) Update(ctx context.Context, req resource.Up
 
 	// Refresh from the server so state carries the server-assigned UUIDs rather
 	// than the plan's unknowns.
-	final, ok := r.fetchRiskEngineSettings(ctx, &resp.Diagnostics)
+	final, ok := r.fetchRiskEngineSettings(ctx, plan, &resp.Diagnostics)
 	if !ok {
 		return
 	}
@@ -402,7 +407,7 @@ func (r *RiskEngineSettingsResource) IdentitySchema(ctx context.Context, req res
 
 // --- proto/model conversion ---
 
-func riskEngineProtoToModel(ctx context.Context, s *apipb.RiskEngineSettings) (RiskEngineSettingsResourceModel, diag.Diagnostics) {
+func riskEngineProtoToModel(ctx context.Context, s *apipb.RiskEngineSettings, prior RiskEngineSettingsResourceModel) (RiskEngineSettingsResourceModel, diag.Diagnostics) {
 	var diags diag.Diagnostics
 	if s == nil {
 		return RiskEngineSettingsResourceModel{
@@ -411,10 +416,10 @@ func riskEngineProtoToModel(ctx context.Context, s *apipb.RiskEngineSettings) (R
 		}, nil
 	}
 
-	local, d := riskLocalPluginsProtoToObject(ctx, s.GetLocalPlugins())
+	local, d := riskLocalPluginsProtoToObject(ctx, s.GetLocalPlugins(), prior.LocalPlugins)
 	diags.Append(d...)
 
-	remote, d := riskRemotePluginsProtoToList(ctx, s.GetRemotePlugins())
+	remote, d := riskRemotePluginsProtoToList(ctx, s.GetRemotePlugins(), prior.RemotePlugins)
 	diags.Append(d...)
 
 	return RiskEngineSettingsResourceModel{
@@ -454,15 +459,15 @@ func riskEngineModelToProto(ctx context.Context, m *RiskEngineSettingsResourceMo
 	}.Build(), diags
 }
 
-func riskLocalPluginsProtoToObject(ctx context.Context, lp *apipb.LocalPluginSettings) (types.Object, diag.Diagnostics) {
+func riskLocalPluginsProtoToObject(ctx context.Context, lp *apipb.LocalPluginSettings, prior types.Object) (types.Object, diag.Diagnostics) {
 	if lp == nil {
 		return types.ObjectNull(riskLocalPluginsAttrTypes), nil
 	}
 	var diags diag.Diagnostics
 
-	vt, d := riskVirusTotalProtoToObject(ctx, lp.GetVirusTotal())
+	vt, d := riskVirusTotalProtoToObject(ctx, lp.GetVirusTotal(), prior)
 	diags.Append(d...)
-	rl, d := riskReversingLabsProtoToObject(ctx, lp.GetReversingLabs())
+	rl, d := riskReversingLabsProtoToObject(ctx, lp.GetReversingLabs(), prior)
 	diags.Append(d...)
 	br, d := riskBlockableRulesProtoToObject(ctx, lp.GetBlockableRules())
 	diags.Append(d...)
@@ -507,7 +512,7 @@ func riskLocalPluginsObjectToProto(ctx context.Context, obj types.Object) (*apip
 	}.Build(), diags
 }
 
-func riskVirusTotalProtoToObject(ctx context.Context, p *apipb.VirusTotalPluginSettings) (types.Object, diag.Diagnostics) {
+func riskVirusTotalProtoToObject(ctx context.Context, p *apipb.VirusTotalPluginSettings, prior types.Object) (types.Object, diag.Diagnostics) {
 	if p == nil {
 		return types.ObjectNull(riskVirusTotalAttrTypes), nil
 	}
@@ -520,7 +525,7 @@ func riskVirusTotalProtoToObject(ctx context.Context, p *apipb.VirusTotalPluginS
 	}
 	obj, d := types.ObjectValue(riskVirusTotalAttrTypes, map[string]attr.Value{
 		"enabled":           boolPtrToTF(p.Enabled),
-		"api_key":           stringPtrToTF(p.ApiKey),
+		"api_key":           secretStringToTF(p.ApiKey, priorLocalSecret(prior, "virus_total", "api_key")),
 		"cache_ttl":         durationToTFString(p.GetCacheTtl()),
 		"num_cache_entries": uint32PtrToTFInt64(p.NumCacheEntries),
 		"exclude_engines":   excludeEngines,
@@ -564,14 +569,14 @@ func riskVirusTotalObjectToProto(ctx context.Context, obj types.Object) (*apipb.
 	}.Build(), d
 }
 
-func riskReversingLabsProtoToObject(ctx context.Context, p *apipb.ReversingLabsPluginSettings) (types.Object, diag.Diagnostics) {
+func riskReversingLabsProtoToObject(ctx context.Context, p *apipb.ReversingLabsPluginSettings, prior types.Object) (types.Object, diag.Diagnostics) {
 	if p == nil {
 		return types.ObjectNull(riskReversingLabsAttrTypes), nil
 	}
 	obj, diags := types.ObjectValue(riskReversingLabsAttrTypes, map[string]attr.Value{
 		"enabled":           boolPtrToTF(p.Enabled),
 		"username":          stringPtrToTF(p.Username),
-		"password":          stringPtrToTF(p.Password),
+		"password":          secretStringToTF(p.Password, priorLocalSecret(prior, "reversing_labs", "password")),
 		"cache_ttl":         durationToTFString(p.GetCacheTtl()),
 		"num_cache_entries": uint32PtrToTFInt64(p.NumCacheEntries),
 		"filter_expr":       emptyStringToNull(p.GetFilterExpr()),
@@ -674,7 +679,7 @@ func riskBlockableRulesObjectToProto(ctx context.Context, obj types.Object) (*ap
 	}.Build(), d
 }
 
-func riskRemotePluginsProtoToList(ctx context.Context, plugins []*apipb.RemoteRiskEnginePluginSettings) (types.List, diag.Diagnostics) {
+func riskRemotePluginsProtoToList(ctx context.Context, plugins []*apipb.RemoteRiskEnginePluginSettings, prior types.List) (types.List, diag.Diagnostics) {
 	if len(plugins) == 0 {
 		return types.ListNull(riskRemotePluginObjectType), nil
 	}
@@ -682,6 +687,16 @@ func riskRemotePluginsProtoToList(ctx context.Context, plugins []*apipb.RemoteRi
 	var diags diag.Diagnostics
 	values := make([]attr.Value, len(plugins))
 	for i, p := range plugins {
+		previous := types.ObjectNull(riskRemotePluginAttrTypes)
+		for j, element := range prior.Elements() {
+			candidate := element.(types.Object)
+			id := priorString(candidate, "uuid")
+			// Only an applied plan has unknown UUIDs. The API retains list order on writes.
+			if (id.ValueString() != "" && id.ValueString() == p.GetUuid()) || (id.IsUnknown() && i == j) {
+				previous = candidate
+				break
+			}
+		}
 		headers := p.GetHeaders()
 		var headerList types.List
 		if len(headers) == 0 {
@@ -691,7 +706,7 @@ func riskRemotePluginsProtoToList(ctx context.Context, plugins []*apipb.RemoteRi
 			for j, h := range headers {
 				hobj, d := types.ObjectValue(riskHttpHeaderAttrTypes, map[string]attr.Value{
 					"key":   types.StringValue(h.GetKey()),
-					"value": types.StringValue(h.GetValue()),
+					"value": headerValueToTF(h.GetKey(), h.GetValue(), priorHeaders(previous)),
 				})
 				diags.Append(d...)
 				hvalues[j] = hobj
@@ -709,7 +724,7 @@ func riskRemotePluginsProtoToList(ctx context.Context, plugins []*apipb.RemoteRi
 			"url":         stringPtrToTF(p.Url),
 			"headers":     headerList,
 			"ttl":         durationToTFString(p.GetTtl()),
-			"secret":      stringPtrToTF(p.Secret),
+			"secret":      secretStringToTF(p.Secret, priorString(previous, "secret")),
 			"filter_expr": emptyStringToNull(p.GetFilterExpr()),
 		})
 		diags.Append(d...)
@@ -781,4 +796,11 @@ func emptyStringToNull(s string) types.String {
 		return types.StringNull()
 	}
 	return types.StringValue(s)
+}
+
+func priorLocalSecret(prior types.Object, plugin, key string) types.String {
+	if object, ok := prior.Attributes()[plugin].(types.Object); ok {
+		return priorString(object, key)
+	}
+	return types.StringNull()
 }

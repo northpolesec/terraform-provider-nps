@@ -154,13 +154,19 @@ func (r *ChatSettingsResource) Create(ctx context.Context, req resource.CreateRe
 }
 
 func (r *ChatSettingsResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
+	var prior ChatSettingsResourceModel
+	resp.Diagnostics.Append(req.State.Get(ctx, &prior)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
 	ret, err := r.client.GetChatSettings(ctx, apipb.GetChatSettingsRequest_builder{}.Build())
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Failed to get chat settings: %v", err))
 		return
 	}
 
-	data, d := chatProtoToModel(ctx, ret.GetSlackBotSettings())
+	data, d := chatProtoToModel(ctx, ret.GetSlackBotSettings(), prior)
 	resp.Diagnostics.Append(d...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -234,7 +240,7 @@ func (r *ChatSettingsResource) IdentitySchema(ctx context.Context, req resource.
 	}
 }
 
-func chatProtoToModel(ctx context.Context, s *apipb.SlackBotSettings) (ChatSettingsResourceModel, diag.Diagnostics) {
+func chatProtoToModel(ctx context.Context, s *apipb.SlackBotSettings, prior ChatSettingsResourceModel) (ChatSettingsResourceModel, diag.Diagnostics) {
 	if s == nil {
 		return ChatSettingsResourceModel{
 			Slack: types.ObjectNull(chatSlackObjectAttrTypes),
@@ -242,10 +248,10 @@ func chatProtoToModel(ctx context.Context, s *apipb.SlackBotSettings) (ChatSetti
 	}
 	obj, d := types.ObjectValue(chatSlackObjectAttrTypes, map[string]attr.Value{
 		"enabled":             boolPtrToTF(s.Enabled),
-		"token":               stringPtrToTF(s.Token),
+		"token":               secretStringToTF(s.Token, priorString(prior.Slack, "token")),
 		"workspace":           stringPtrToTF(s.Workspace),
 		"use_emojis":          boolPtrToTF(s.UseEmojis),
-		"hmac_signing_secret": stringPtrToTF(s.HmacSigningSecret),
+		"hmac_signing_secret": secretStringToTF(s.HmacSigningSecret, priorString(prior.Slack, "hmac_signing_secret")),
 		"url_redirect_cookie": stringPtrToTF(s.UrlRedirectCookie),
 	})
 	return ChatSettingsResourceModel{Slack: obj}, d

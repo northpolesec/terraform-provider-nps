@@ -4,6 +4,7 @@ package provider
 import (
 	"context"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -31,6 +32,26 @@ func stringPtrToTF(v *string) types.String {
 		return types.StringNull()
 	}
 	return types.StringValue(*v)
+}
+
+// Empty API secrets are redacted. Keep the applied value to prevent refresh drift.
+func secretStringToTF(value *string, prior types.String) types.String {
+	if value == nil || *value == "" {
+		return prior
+	}
+	return types.StringValue(*value)
+}
+
+func headerValueToTF(key, value string, prior types.List) types.String {
+	if value == "" {
+		for _, element := range prior.Elements() {
+			header := element.(types.Object)
+			if strings.EqualFold(key, priorString(header, "key").ValueString()) {
+				return priorString(header, "value")
+			}
+		}
+	}
+	return types.StringValue(value)
 }
 
 func tfStringToPtr(v types.String) *string {

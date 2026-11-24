@@ -149,7 +149,7 @@ func TestRiskEngineRoundtrip(t *testing.T) {
 		},
 	}.Build()
 
-	model, diags := riskEngineProtoToModel(ctx, original)
+	model, diags := riskEngineProtoToModel(ctx, original, RiskEngineSettingsResourceModel{})
 	if diags.HasError() {
 		t.Fatalf("unexpected diagnostics: %v", diags)
 	}
@@ -257,7 +257,7 @@ func TestRiskEngineOnlyEvaluateBlockedEventsRoundtrip(t *testing.T) {
 		OnlyEvaluateBlockedEvents: proto.Bool(true),
 	}.Build()
 
-	model, diags := riskEngineProtoToModel(ctx, original)
+	model, diags := riskEngineProtoToModel(ctx, original, RiskEngineSettingsResourceModel{})
 	if diags.HasError() {
 		t.Fatalf("unexpected diagnostics: %v", diags)
 	}

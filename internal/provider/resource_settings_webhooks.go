@@ -270,8 +270,7 @@ func (r *WebhookSettingsResource) apply(ctx context.Context, config tfsdk.Config
 }
 
 func (r *WebhookSettingsResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
-	// The server never returns secrets, so carry them over from prior state to
-	// avoid perpetual diffs on the (non-write-only) secret attribute.
+	// Keep redacted secrets from prior state to prevent refresh drift.
 	var prior WebhookSettingsResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &prior)...)
 	if resp.Diagnostics.HasError() {
@@ -535,7 +534,7 @@ func webhookBasicValues(ctx context.Context, b *apipb.WebhookBasicConfig, prior 
 	if b != nil && len(b.GetHeaders()) > 0 {
 		hms := make([]webhookHeaderModel, len(b.GetHeaders()))
 		for i, h := range b.GetHeaders() {
-			hms[i] = webhookHeaderModel{Key: types.StringValue(h.GetKey()), Value: types.StringValue(h.GetValue())}
+			hms[i] = webhookHeaderModel{Key: types.StringValue(h.GetKey()), Value: headerValueToTF(h.GetKey(), h.GetValue(), priorHeaders(prior))}
 		}
 		l, d := types.ListValueFrom(ctx, webhookHeaderAttrTypesObject(), hms)
 		diags.Append(d...)
@@ -544,7 +543,7 @@ func webhookBasicValues(ctx context.Context, b *apipb.WebhookBasicConfig, prior 
 	return map[string]attr.Value{
 		"enabled":           boolPtrToTF(basicEnabled(b)),
 		"url":               stringPtrToTF(basicUrl(b)),
-		"secret":            priorString(prior, "secret"),            // server never returns it
+		"secret":            secretStringToTF(basicSecret(b), priorString(prior, "secret")),
 		"secret_wo":         types.StringNull(),                      // write-only: never in state
 		"secret_wo_version": priorString(prior, "secret_wo_version"), // server doesn't track it
 		"headers":           headers,
@@ -553,6 +552,13 @@ func webhookBasicValues(ctx context.Context, b *apipb.WebhookBasicConfig, prior 
 
 func webhookHeaderAttrTypesObject() attr.Type {
 	return types.ObjectType{AttrTypes: webhookHeaderAttrTypes}
+}
+
+func basicSecret(b *apipb.WebhookBasicConfig) *string {
+	if b == nil {
+		return nil
+	}
+	return b.Secret
 }
 
 func basicEnabled(b *apipb.WebhookBasicConfig) *bool {
