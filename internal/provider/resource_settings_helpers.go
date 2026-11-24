@@ -39,8 +39,6 @@ func stringPtrToTF(v *string) types.String {
 	return types.StringValue(*v)
 }
 
-// priorHeaderValue returns the prior-state value of the header with this key.
-// Read never copies header values from the API: they are secrets.
 func priorHeaderValue(key string, prior types.List) types.String {
 	for _, element := range prior.Elements() {
 		header := element.(types.Object)
@@ -51,10 +49,8 @@ func priorHeaderValue(key string, prior types.List) types.String {
 	return types.StringNull()
 }
 
-// writeOnlySecretAttribute is the write-only replacement of the plain secret
-// attribute named plain. Writes send it every time; version only triggers them.
 func writeOnlySecretAttribute(plain, version string) schema.StringAttribute {
-	const text = "Write-only variant of %[1]s: Terraform sends it on every write and never stores it in state. Requires Terraform 1.11 or later. Conflicts with %[1]s. Terraform cannot detect a change to this value, so change %[2]s to send a new one. An empty value keeps the stored secret: a version change cannot clear it. Import cannot recover it."
+	const text = "Write-only %s. Not stored in state. Change %s to send a new value. Needs Terraform 1.11+."
 	return schema.StringAttribute{
 		Description:         fmt.Sprintf(text, plain, version),
 		MarkdownDescription: fmt.Sprintf(text, "`"+plain+"`", "`"+version+"`"),
@@ -65,24 +61,22 @@ func writeOnlySecretAttribute(plain, version string) schema.StringAttribute {
 	}
 }
 
-// writeOnlyVersionAttribute triggers a write of the named write-only attributes.
 func writeOnlyVersionAttribute(attributes string) schema.StringAttribute {
-	const text = "Change this value to send new values of %s. Terraform keeps no copy of write-only values, so it cannot detect a change to them."
+	const text = "Change this value to send %s. A version change cannot clear a secret, and import cannot recover one."
 	return schema.StringAttribute{
-		Description:         fmt.Sprintf(text, attributes),
+		Description:         fmt.Sprintf(text, strings.ReplaceAll(attributes, "`", "")),
 		MarkdownDescription: fmt.Sprintf(text, attributes),
 		Optional:            true,
 	}
 }
 
-// headerValueAttribute is the plain value of a header that also has value_wo.
 func headerValueAttribute() schema.StringAttribute {
 	return schema.StringAttribute{
-		Description:         "HTTP header value. Stored in Terraform state. Set exactly one of value or value_wo.",
-		MarkdownDescription: "HTTP header value. Stored in Terraform state. Set exactly one of `value` or `value_wo`.",
+		Description:         "HTTP header value. Stored in state. Set exactly one of value or value_wo.",
+		MarkdownDescription: "HTTP header value. Stored in state. Set exactly one of `value` or `value_wo`.",
 		Optional:            true,
 		Sensitive:           true,
-		DeprecationMessage:  "Use value_wo, which keeps the header value out of Terraform state.",
+		DeprecationMessage:  "Use value_wo.",
 		Validators:          []validator.String{stringvalidator.AtLeastOneOf(path.MatchRelative().AtParent().AtName("value_wo"))},
 	}
 }
@@ -94,7 +88,6 @@ func headerValueForWrite(value, wo types.String) string {
 	return ""
 }
 
-// withWriteOnly returns the configured write-only value when it is set, else value.
 func withWriteOnly(value *string, wo types.String) *string {
 	if wo.IsNull() || wo.IsUnknown() {
 		return value

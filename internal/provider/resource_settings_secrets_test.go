@@ -19,9 +19,9 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// settingsSecretServer is a fake Workshop API. Like Workshop, an empty secret
-// in a write keeps the stored one, and a remote plugin without a UUID gets one.
-// returnSecrets selects whether reads return secrets or empty values.
+// settingsSecretServer is a fake Workshop API. An empty secret in a write keeps
+// the stored one, except a webhook header value when returnSecrets is set,
+// which models the current server.
 type settingsSecretServer struct {
 	svcpb.UnimplementedWorkshopServiceServer
 	mu            sync.Mutex
@@ -163,17 +163,18 @@ func (s *settingsSecretServer) UpdateWebhookSettings(_ context.Context, req *api
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	in := proto.Clone(req.GetSettings()).(*apipb.WebhookSettings)
-	stored := webhookBasics(s.webhooks)
-	for i, basic := range webhookBasics(in) {
-		if basic != nil {
-			keepHeaders(basic.GetHeaders(), stored[i].GetHeaders())
+	if !s.returnSecrets {
+		stored := webhookBasics(s.webhooks)
+		for i, basic := range webhookBasics(in) {
+			if basic != nil {
+				keepHeaders(basic.GetHeaders(), stored[i].GetHeaders())
+			}
 		}
 	}
 	s.webhooks = in
 	return apipb.UpdateWebhookSettingsResponse_builder{}.Build(), nil
 }
 
-// storedSecrets returns every secret that the fake API holds for kind.
 func (s *settingsSecretServer) storedSecrets(kind string) []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -219,7 +220,6 @@ func expectStored(api *settingsSecretServer, kind, want string) resource.TestChe
 	}
 }
 
-// plainSecretPaths are the state paths of the deprecated plain secrets.
 var plainSecretPaths = map[string][]string{
 	"chat":        {"slack.token", "slack.hmac_signing_secret"},
 	"risk_engine": {"local_plugins.virus_total.api_key", "local_plugins.reversing_labs.password", "remote_plugins.0.secret", "remote_plugins.0.headers.0.value"},
@@ -246,26 +246,40 @@ func TestSettingsSecretsPlan(t *testing.T) {
 						Check:            resource.ComposeTestCheckFunc(append(slices.Clone(noPlainSecrets), expectStored(api, kind, stored))...),
 					}
 				}
-				// Every step also fails if the refresh after apply plans a change.
 				steps := []resource.TestStep{
 					{Config: settingsSecretsConfig(endpoint, kind, "plain-1", ""), Check: expectStored(api, kind, "plain-1")},
 					{Config: settingsSecretsConfig(endpoint, kind, "plain-2", ""), ConfigPlanChecks: update, Check: expectStored(api, kind, "plain-2")},
 					woStep("wo-1", "1", update, "wo-1"),
-					// Terraform keeps no copy of a write-only value, so only the version triggers a write.
 					woStep("wo-2", "1", resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()}}, "wo-1"),
 					woStep("wo-2", "2", update, "wo-2"),
 				}
 				if kind == "risk_engine" {
 					steps[0].Check = resource.ComposeTestCheckFunc(steps[0].Check, resource.TestCheckResourceAttr(address, "remote_plugins.0.uuid", "uuid-1"))
 				}
-				resource.UnitTest(t, resource.TestCase{ProtoV6ProviderFactories: testAccProtoV6ProviderFactories, Steps: steps})
+				testCase := resource.TestCase{ProtoV6ProviderFactories: testAccProtoV6ProviderFactories, Steps: steps}
+				if kind == "webhooks" {
+					testCase.CheckDestroy = func(state *terraform.State) error {
+						api.mu.Lock()
+						defer api.mu.Unlock()
+						for _, basic := range webhookBasics(api.webhooks) {
+							if basic.GetEnabled() {
+								return fmt.Errorf("webhook still enabled after destroy")
+							}
+						}
+						for _, basic := range webhookBasics(api.webhooks) {
+							if got := basic.GetHeaders()[0].GetValue(); got != "wo-2" {
+								return fmt.Errorf("header value after destroy: got %q, want \"wo-2\"", got)
+							}
+						}
+						return nil
+					}
+				}
+				resource.UnitTest(t, testCase)
 			})
 		}
 	}
 }
 
-// A plugin saved before Workshop assigned UUIDs has none in state. Read must
-// still find its secret, before and after Workshop assigns the UUID.
 func TestSettingsSecretsPluginWithoutUUID(t *testing.T) {
 	t.Setenv("WORKSHOP_API_KEY", "")
 	for _, returnSecrets := range []bool{false, true} {
@@ -294,8 +308,6 @@ func TestSettingsSecretsPluginWithoutUUID(t *testing.T) {
 	}
 }
 
-// settingsSecretsConfig sets every secret of kind to secret. A non-empty
-// version uses the write-only attributes with that version.
 func settingsSecretsConfig(endpoint, kind, secret, version string) string {
 	provider := fmt.Sprintf("provider \"nps\" {\n endpoint = %q\n api_key = \"test-key\"\n}\n", endpoint)
 	attr := func(name string) string {
@@ -331,7 +343,7 @@ remote_plugins = [{
 			versionLine = fmt.Sprintf("secret_wo_version = %q", version)
 		}
 		for _, name := range []string{"audit_events", "signal_reports", "software_approvals"} {
-			body += fmt.Sprintf("%s = {\n %s\n headers = [{ key = \"Authorization\", %s }]\n}\n", name, versionLine, attr("value"))
+			body += fmt.Sprintf("%s = {\n enabled = true\n %s\n headers = [{ key = \"Authorization\", %s }]\n}\n", name, versionLine, attr("value"))
 		}
 	}
 	return provider + fmt.Sprintf("resource \"nps_workshop_settings_%s\" \"test\" {\n%s}\n", kind, body)

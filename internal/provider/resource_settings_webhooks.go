@@ -145,11 +145,7 @@ func webhookBasicAttributes(extra map[string]schema.Attribute) map[string]schema
 			Sensitive:           true,
 			WriteOnly:           true,
 		},
-		"secret_wo_version": schema.StringAttribute{
-			Description:         "Trigger for rotating secret_wo. Since write-only values aren't stored in state, Terraform can't detect a changed secret_wo on its own; change this value whenever secret_wo changes to force the new secret to be sent.",
-			MarkdownDescription: "Trigger for rotating `secret_wo`. Since write-only values aren't stored in state, Terraform can't detect a changed `secret_wo` on its own; change this value whenever `secret_wo` changes to force the new secret to be sent.",
-			Optional:            true,
-		},
+		"secret_wo_version": writeOnlyVersionAttribute("new `secret_wo` and header `value_wo` values"),
 		"headers": schema.ListNestedAttribute{
 			Description:         "Additional HTTP headers attached to every delivery.",
 			MarkdownDescription: "Additional HTTP headers attached to every delivery.",
@@ -299,26 +295,31 @@ func (r *WebhookSettingsResource) Read(ctx context.Context, req resource.ReadReq
 
 func (r *WebhookSettingsResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
 	// Disabling on destroy keeps each source's URL/secret server-side but stops
-	// deliveries, matching the documented "enabled" semantics.
+	// deliveries, matching the documented "enabled" semantics. Start from the
+	// server copy: state lacks write-only header values, and the update replaces
+	// every source, also unmanaged ones.
 	var state WebhookSettingsResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	settings, d := webhookSettingsToProto(ctx, state)
-	resp.Diagnostics.Append(d...)
-	if resp.Diagnostics.HasError() {
+	ret, err := r.client.GetWebhookSettings(ctx, apipb.GetWebhookSettingsRequest_builder{}.Build())
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Failed to get webhook settings: %v", err))
 		return
 	}
-
-	for _, b := range []*apipb.WebhookBasicConfig{
-		settings.GetAuditEvents().GetBasic(),
-		settings.GetSignalReports().GetBasic(),
-		settings.GetSoftwareApprovals().GetBasic(),
+	settings := ret.GetSettings()
+	for _, source := range []struct {
+		managed bool
+		basic   *apipb.WebhookBasicConfig
+	}{
+		{!state.AuditEvents.IsNull(), settings.GetAuditEvents().GetBasic()},
+		{!state.SignalReports.IsNull(), settings.GetSignalReports().GetBasic()},
+		{!state.SoftwareApprovals.IsNull(), settings.GetSoftwareApprovals().GetBasic()},
 	} {
-		if b != nil {
-			b.SetEnabled(false)
+		if source.managed && source.basic != nil {
+			source.basic.SetEnabled(false)
 		}
 	}
 

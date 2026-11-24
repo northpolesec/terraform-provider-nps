@@ -55,7 +55,7 @@ resource "nps_workshop_settings_risk_engine" "settings" {
 - `only_evaluate_blocked_events` (Boolean) When true, the risk engine only evaluates blockables reported by `BLOCK_UNKNOWN` events. Blockables seen only via `ALLOW_UNKNOWN` (monitor mode) events are skipped by the event pipeline and by the refresh cron. Evaluation still happens on demand when an approval is requested.
 - `plugin_timeout` (String) How long to wait for all plugins to respond (Go duration string, e.g. `"5s"`).
 - `remote_plugins` (Attributes List) Remote (webhook-based) risk engine plugins. (see [below for nested schema](#nestedatt--remote_plugins))
-- `secrets_wo_version` (String) Change this value to send new values of api_key_wo, password_wo, and the remote plugin secret_wo and header value_wo. Terraform keeps no copy of write-only values, so it cannot detect a change to them.
+- `secrets_wo_version` (String) Change this value to send new `api_key_wo`, `password_wo`, plugin `secret_wo` and header `value_wo` values. A version change cannot clear a secret, and import cannot recover one.
 
 <a id="nestedatt--local_plugins"></a>
 ### Nested Schema for `local_plugins`
@@ -99,8 +99,8 @@ Optional:
 - `enabled` (Boolean)
 - `filter_expr` (String)
 - `num_cache_entries` (Number) Number of cache entries (0-50,000).
-- `password` (String, Sensitive, Deprecated) ReversingLabs password. Stored in Terraform state. Conflicts with `password_wo`.
-- `password_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Write-only variant of `password`: Terraform sends it on every write and never stores it in state. Requires Terraform 1.11 or later. Conflicts with `password`. Terraform cannot detect a change to this value, so change `secrets_wo_version` to send a new one. An empty value keeps the stored secret: a version change cannot clear it. Import cannot recover it.
+- `password` (String, Sensitive, Deprecated) ReversingLabs password. Stored in state. Conflicts with `password_wo`.
+- `password_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Write-only `password`. Not stored in state. Change `secrets_wo_version` to send a new value. Needs Terraform 1.11+.
 - `username` (String)
 
 
@@ -109,8 +109,8 @@ Optional:
 
 Optional:
 
-- `api_key` (String, Sensitive, Deprecated) VirusTotal API key. Stored in Terraform state. Conflicts with `api_key_wo`.
-- `api_key_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Write-only variant of `api_key`: Terraform sends it on every write and never stores it in state. Requires Terraform 1.11 or later. Conflicts with `api_key`. Terraform cannot detect a change to this value, so change `secrets_wo_version` to send a new one. An empty value keeps the stored secret: a version change cannot clear it. Import cannot recover it.
+- `api_key` (String, Sensitive, Deprecated) VirusTotal API key. Stored in state. Conflicts with `api_key_wo`.
+- `api_key_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Write-only `api_key`. Not stored in state. Change `secrets_wo_version` to send a new value. Needs Terraform 1.11+.
 - `cache_ttl` (String) Cache TTL as a Go duration.
 - `enabled` (Boolean)
 - `exclude_engines` (List of String) Engines to exclude from VirusTotal responses.
@@ -128,8 +128,8 @@ Optional:
 - `filter_expr` (String) CEL expression evaluated before invoking the plugin. Empty = always run.
 - `headers` (Attributes List) HTTP headers sent to the plugin server. (see [below for nested schema](#nestedatt--remote_plugins--headers))
 - `name` (String) Plugin identifier.
-- `secret` (String, Sensitive, Deprecated) Hex-encoded shared secret for authenticating to the plugin. Stored in Terraform state. Conflicts with `secret_wo`.
-- `secret_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Write-only variant of `secret`: Terraform sends it on every write and never stores it in state. Requires Terraform 1.11 or later. Conflicts with `secret`. Terraform cannot detect a change to this value, so change `secrets_wo_version` to send a new one. An empty value keeps the stored secret: a version change cannot clear it. Import cannot recover it.
+- `secret` (String, Sensitive, Deprecated) Hex-encoded shared secret for the plugin. Stored in state. Conflicts with `secret_wo`.
+- `secret_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Write-only `secret`. Not stored in state. Change `secrets_wo_version` to send a new value. Needs Terraform 1.11+.
 - `ttl` (String) How long a response from the plugin server is valid (Go duration).
 - `url` (String) URL of the plugin server.
 - `uuid` (String) UUID for future updates.
@@ -144,5 +144,5 @@ Required:
 
 Optional:
 
-- `value` (String, Sensitive, Deprecated) HTTP header value. Stored in Terraform state. Set exactly one of `value` or `value_wo`.
-- `value_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Write-only variant of `value`: Terraform sends it on every write and never stores it in state. Requires Terraform 1.11 or later. Conflicts with `value`. Terraform cannot detect a change to this value, so change `secrets_wo_version` to send a new one. An empty value keeps the stored secret: a version change cannot clear it. Import cannot recover it.
+- `value` (String, Sensitive, Deprecated) HTTP header value. Stored in state. Set exactly one of `value` or `value_wo`.
+- `value_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Write-only `value`. Not stored in state. Change `secrets_wo_version` to send a new value. Needs Terraform 1.11+.

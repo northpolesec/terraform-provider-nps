@@ -67,7 +67,7 @@ Optional:
 - `headers` (Attributes List) Additional HTTP headers attached to every delivery. (see [below for nested schema](#nestedatt--audit_events--headers))
 - `secret` (String, Sensitive) Signing secret keying the HMAC-SHA256 signature sent in the `webhook-signature` header. Write-only server-side (never returned by the API). Conflicts with `secret_wo`.
 - `secret_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Write-only variant of `secret`: its value is never stored in Terraform state. Supply from an ephemeral input. Conflicts with `secret`. Because write-only values are absent from state, changing this alone will not trigger an update — bump `secret_wo_version` to rotate it.
-- `secret_wo_version` (String) Trigger for rotating `secret_wo`. Since write-only values aren't stored in state, Terraform can't detect a changed `secret_wo` on its own; change this value whenever `secret_wo` changes to force the new secret to be sent.
+- `secret_wo_version` (String) Change this value to send new `secret_wo` and header `value_wo` values. A version change cannot clear a secret, and import cannot recover one.
 - `url` (String) Destination HTTPS URL. Empty disables the webhook.
 
 <a id="nestedatt--audit_events--headers"></a>
@@ -79,8 +79,8 @@ Required:
 
 Optional:
 
-- `value` (String, Sensitive, Deprecated) HTTP header value. Stored in Terraform state. Set exactly one of `value` or `value_wo`.
-- `value_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Write-only variant of `value`: Terraform sends it on every write and never stores it in state. Requires Terraform 1.11 or later. Conflicts with `value`. Terraform cannot detect a change to this value, so change `secret_wo_version` to send a new one. An empty value keeps the stored secret: a version change cannot clear it. Import cannot recover it.
+- `value` (String, Sensitive, Deprecated) HTTP header value. Stored in state. Set exactly one of `value` or `value_wo`.
+- `value_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Write-only `value`. Not stored in state. Change `secret_wo_version` to send a new value. Needs Terraform 1.11+.
 
 
 
@@ -93,7 +93,7 @@ Optional:
 - `headers` (Attributes List) Additional HTTP headers attached to every delivery. (see [below for nested schema](#nestedatt--signal_reports--headers))
 - `secret` (String, Sensitive) Signing secret keying the HMAC-SHA256 signature sent in the `webhook-signature` header. Write-only server-side (never returned by the API). Conflicts with `secret_wo`.
 - `secret_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Write-only variant of `secret`: its value is never stored in Terraform state. Supply from an ephemeral input. Conflicts with `secret`. Because write-only values are absent from state, changing this alone will not trigger an update — bump `secret_wo_version` to rotate it.
-- `secret_wo_version` (String) Trigger for rotating `secret_wo`. Since write-only values aren't stored in state, Terraform can't detect a changed `secret_wo` on its own; change this value whenever `secret_wo` changes to force the new secret to be sent.
+- `secret_wo_version` (String) Change this value to send new `secret_wo` and header `value_wo` values. A version change cannot clear a secret, and import cannot recover one.
 - `states` (List of String) Signal report states to deliver on (e.g. `SIGNAL_REPORT_STATE_NEW`). Empty delivers all states.
 - `url` (String) Destination HTTPS URL. Empty disables the webhook.
 
@@ -106,8 +106,8 @@ Required:
 
 Optional:
 
-- `value` (String, Sensitive, Deprecated) HTTP header value. Stored in Terraform state. Set exactly one of `value` or `value_wo`.
-- `value_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Write-only variant of `value`: Terraform sends it on every write and never stores it in state. Requires Terraform 1.11 or later. Conflicts with `value`. Terraform cannot detect a change to this value, so change `secret_wo_version` to send a new one. An empty value keeps the stored secret: a version change cannot clear it. Import cannot recover it.
+- `value` (String, Sensitive, Deprecated) HTTP header value. Stored in state. Set exactly one of `value` or `value_wo`.
+- `value_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Write-only `value`. Not stored in state. Change `secret_wo_version` to send a new value. Needs Terraform 1.11+.
 
 
 
@@ -120,7 +120,7 @@ Optional:
 - `headers` (Attributes List) Additional HTTP headers attached to every delivery. (see [below for nested schema](#nestedatt--software_approvals--headers))
 - `secret` (String, Sensitive) Signing secret keying the HMAC-SHA256 signature sent in the `webhook-signature` header. Write-only server-side (never returned by the API). Conflicts with `secret_wo`.
 - `secret_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Write-only variant of `secret`: its value is never stored in Terraform state. Supply from an ephemeral input. Conflicts with `secret`. Because write-only values are absent from state, changing this alone will not trigger an update — bump `secret_wo_version` to rotate it.
-- `secret_wo_version` (String) Trigger for rotating `secret_wo`. Since write-only values aren't stored in state, Terraform can't detect a changed `secret_wo` on its own; change this value whenever `secret_wo` changes to force the new secret to be sent.
+- `secret_wo_version` (String) Change this value to send new `secret_wo` and header `value_wo` values. A version change cannot clear a secret, and import cannot recover one.
 - `url` (String) Destination HTTPS URL. Empty disables the webhook.
 
 <a id="nestedatt--software_approvals--headers"></a>
@@ -132,8 +132,8 @@ Required:
 
 Optional:
 
-- `value` (String, Sensitive, Deprecated) HTTP header value. Stored in Terraform state. Set exactly one of `value` or `value_wo`.
-- `value_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Write-only variant of `value`: Terraform sends it on every write and never stores it in state. Requires Terraform 1.11 or later. Conflicts with `value`. Terraform cannot detect a change to this value, so change `secret_wo_version` to send a new one. An empty value keeps the stored secret: a version change cannot clear it. Import cannot recover it.
+- `value` (String, Sensitive, Deprecated) HTTP header value. Stored in state. Set exactly one of `value` or `value_wo`.
+- `value_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Write-only `value`. Not stored in state. Change `secret_wo_version` to send a new value. Needs Terraform 1.11+.
 
 ## Import
 

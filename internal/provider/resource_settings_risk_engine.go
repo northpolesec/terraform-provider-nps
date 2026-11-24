@@ -206,8 +206,8 @@ func (r *RiskEngineSettingsResource) Schema(ctx context.Context, req resource.Sc
 			"secret": schema.StringAttribute{
 				Optional:            true,
 				Sensitive:           true,
-				MarkdownDescription: "Hex-encoded shared secret for authenticating to the plugin. Stored in Terraform state. Conflicts with `secret_wo`.",
-				DeprecationMessage:  "Use secret_wo, which keeps the secret out of Terraform state.",
+				MarkdownDescription: "Hex-encoded shared secret for the plugin. Stored in state. Conflicts with `secret_wo`.",
+				DeprecationMessage:  "Use secret_wo.",
 			},
 			"secret_wo":   writeOnlySecretAttribute("secret", "secrets_wo_version"),
 			"filter_expr": schema.StringAttribute{Optional: true, MarkdownDescription: "CEL expression evaluated before invoking the plugin. Empty = always run."},
@@ -239,8 +239,8 @@ func (r *RiskEngineSettingsResource) Schema(ctx context.Context, req resource.Sc
 							"api_key": schema.StringAttribute{
 								Optional:            true,
 								Sensitive:           true,
-								MarkdownDescription: "VirusTotal API key. Stored in Terraform state. Conflicts with `api_key_wo`.",
-								DeprecationMessage:  "Use api_key_wo, which keeps the key out of Terraform state.",
+								MarkdownDescription: "VirusTotal API key. Stored in state. Conflicts with `api_key_wo`.",
+								DeprecationMessage:  "Use api_key_wo.",
 							},
 							"api_key_wo": writeOnlySecretAttribute("api_key", "secrets_wo_version"),
 							"cache_ttl":  schema.StringAttribute{Optional: true, MarkdownDescription: "Cache TTL as a Go duration."},
@@ -262,8 +262,8 @@ func (r *RiskEngineSettingsResource) Schema(ctx context.Context, req resource.Sc
 							"password": schema.StringAttribute{
 								Optional:            true,
 								Sensitive:           true,
-								MarkdownDescription: "ReversingLabs password. Stored in Terraform state. Conflicts with `password_wo`.",
-								DeprecationMessage:  "Use password_wo, which keeps the password out of Terraform state.",
+								MarkdownDescription: "ReversingLabs password. Stored in state. Conflicts with `password_wo`.",
+								DeprecationMessage:  "Use password_wo.",
 							},
 							"password_wo": writeOnlySecretAttribute("password", "secrets_wo_version"),
 							"cache_ttl":   schema.StringAttribute{Optional: true, MarkdownDescription: "Cache TTL as a Go duration."},
@@ -296,7 +296,7 @@ func (r *RiskEngineSettingsResource) Schema(ctx context.Context, req resource.Sc
 				Description:         "When true, the risk engine only evaluates blockables reported by BLOCK_UNKNOWN events. Blockables seen only via ALLOW_UNKNOWN (monitor mode) events are skipped by the event pipeline and by the refresh cron. Evaluation still happens on demand when an approval is requested.",
 				MarkdownDescription: "When true, the risk engine only evaluates blockables reported by `BLOCK_UNKNOWN` events. Blockables seen only via `ALLOW_UNKNOWN` (monitor mode) events are skipped by the event pipeline and by the refresh cron. Evaluation still happens on demand when an approval is requested.",
 			},
-			"secrets_wo_version": writeOnlyVersionAttribute("api_key_wo, password_wo, and the remote plugin secret_wo and header value_wo"),
+			"secrets_wo_version": writeOnlyVersionAttribute("new `api_key_wo`, `password_wo`, plugin `secret_wo` and header `value_wo` values"),
 		},
 	}
 }
@@ -464,8 +464,6 @@ func riskEngineProtoToModel(ctx context.Context, s *apipb.RiskEngineSettings, pr
 	}, diags
 }
 
-// riskEngineForWrite builds the request from the plan, which carries the
-// plugin UUIDs, and adds the write-only secrets, which only the config carries.
 func riskEngineForWrite(ctx context.Context, plan *RiskEngineSettingsResourceModel, config tfsdk.Config) (*apipb.RiskEngineSettings, diag.Diagnostics) {
 	settings, diags := riskEngineModelToProto(ctx, plan)
 	if diags.HasError() {
@@ -872,11 +870,8 @@ func emptyStringToNull(s string) types.String {
 	return types.StringValue(s)
 }
 
-// priorRemotePlugin returns the prior entry of API plugin i, or null. Secrets
-// come only from prior state. Match by UUID. Right after a write the plan has
-// unknown UUIDs, and Workshop keeps the order, so match by position. A prior
-// entry without a UUID (from before Workshop assigned them) matches by URL only
-// when the URL is unique in both the prior state and the API response.
+// Match by UUID, then by position for a plan's unknown UUIDs (Workshop keeps the
+// order), then a UUID-less prior entry by a URL unique on both sides.
 func priorRemotePlugin(i int, plugins []*apipb.RemoteRiskEnginePluginSettings, prior types.List) types.Object {
 	p := plugins[i]
 	elements := prior.Elements()

@@ -85,11 +85,11 @@ func (r *ChatSettingsResource) Schema(ctx context.Context, req resource.SchemaRe
 						Optional:            true,
 					},
 					"token": schema.StringAttribute{
-						Description:         "The Slack token for the bot to connect to the workspace. Sensitive. Stored in Terraform state. Conflicts with token_wo.",
-						MarkdownDescription: "The Slack token for the bot to connect to the workspace. Sensitive. Stored in Terraform state. Conflicts with `token_wo`.",
+						Description:         "Slack bot token. Stored in state. Conflicts with token_wo.",
+						MarkdownDescription: "Slack bot token. Stored in state. Conflicts with `token_wo`.",
 						Optional:            true,
 						Sensitive:           true,
-						DeprecationMessage:  "Use token_wo, which keeps the token out of Terraform state.",
+						DeprecationMessage:  "Use token_wo.",
 					},
 					"token_wo": writeOnlySecretAttribute("token", "secrets_wo_version"),
 					"workspace": schema.StringAttribute{
@@ -103,11 +103,11 @@ func (r *ChatSettingsResource) Schema(ctx context.Context, req resource.SchemaRe
 						Optional:            true,
 					},
 					"hmac_signing_secret": schema.StringAttribute{
-						Description:         "The HMAC signing secret for the Slack bot. Sensitive. Stored in Terraform state. Conflicts with hmac_signing_secret_wo.",
-						MarkdownDescription: "The HMAC signing secret for the Slack bot. Sensitive. Stored in Terraform state. Conflicts with `hmac_signing_secret_wo`.",
+						Description:         "Slack HMAC signing secret. Stored in state. Conflicts with hmac_signing_secret_wo.",
+						MarkdownDescription: "Slack HMAC signing secret. Stored in state. Conflicts with `hmac_signing_secret_wo`.",
 						Optional:            true,
 						Sensitive:           true,
-						DeprecationMessage:  "Use hmac_signing_secret_wo, which keeps the secret out of Terraform state.",
+						DeprecationMessage:  "Use hmac_signing_secret_wo.",
 					},
 					"hmac_signing_secret_wo": writeOnlySecretAttribute("hmac_signing_secret", "secrets_wo_version"),
 					"url_redirect_cookie": schema.StringAttribute{
@@ -117,7 +117,7 @@ func (r *ChatSettingsResource) Schema(ctx context.Context, req resource.SchemaRe
 					},
 				},
 			},
-			"secrets_wo_version": writeOnlyVersionAttribute("token_wo and hmac_signing_secret_wo"),
+			"secrets_wo_version": writeOnlyVersionAttribute("new `token_wo` and `hmac_signing_secret_wo` values"),
 		},
 	}
 }
@@ -260,8 +260,6 @@ func chatProtoToModel(ctx context.Context, s *apipb.SlackBotSettings, prior Chat
 			SecretsWoVersion: prior.SecretsWoVersion,
 		}, nil
 	}
-	// Secrets come from prior state only, so an API that returns them cannot put
-	// them in state, and one that redacts them causes no drift.
 	obj, d := types.ObjectValue(chatSlackObjectAttrTypes, map[string]attr.Value{
 		"enabled":                boolPtrToTF(s.Enabled),
 		"token":                  priorString(prior.Slack, "token"),
@@ -275,8 +273,6 @@ func chatProtoToModel(ctx context.Context, s *apipb.SlackBotSettings, prior Chat
 	return ChatSettingsResourceModel{Slack: obj, SecretsWoVersion: prior.SecretsWoVersion}, d
 }
 
-// chatSlackForWrite builds the request from the plan and adds the write-only
-// secrets, which only the config carries.
 func chatSlackForWrite(ctx context.Context, plan types.Object, config tfsdk.Config) (*apipb.SlackBotSettings, diag.Diagnostics) {
 	slack, diags := chatSlackFromObject(ctx, plan)
 	if slack == nil || diags.HasError() {
