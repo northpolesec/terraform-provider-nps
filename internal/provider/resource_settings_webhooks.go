@@ -543,7 +543,7 @@ func webhookBasicValues(ctx context.Context, b *apipb.WebhookBasicConfig, prior 
 	return map[string]attr.Value{
 		"enabled":           boolPtrToTF(basicEnabled(b)),
 		"url":               stringPtrToTF(basicUrl(b)),
-		"secret":            secretStringToTF(basicSecret(b), priorString(prior, "secret")),
+		"secret":            priorString(prior, "secret"),            // secret_wo must stay out of state
 		"secret_wo":         types.StringNull(),                      // write-only: never in state
 		"secret_wo_version": priorString(prior, "secret_wo_version"), // server doesn't track it
 		"headers":           headers,
@@ -552,13 +552,6 @@ func webhookBasicValues(ctx context.Context, b *apipb.WebhookBasicConfig, prior 
 
 func webhookHeaderAttrTypesObject() attr.Type {
 	return types.ObjectType{AttrTypes: webhookHeaderAttrTypes}
-}
-
-func basicSecret(b *apipb.WebhookBasicConfig) *string {
-	if b == nil {
-		return nil
-	}
-	return b.Secret
 }
 
 func basicEnabled(b *apipb.WebhookBasicConfig) *bool {

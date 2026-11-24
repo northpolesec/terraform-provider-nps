@@ -219,7 +219,7 @@ func TestSettingsSecretsUseAPIReferences(t *testing.T) {
 	}
 	webhookSettings := func(secret string) *apipb.WebhookSettings {
 		return apipb.WebhookSettings_builder{SoftwareApprovals: apipb.WebhookSoftwareApprovalConfig_builder{Basic: apipb.WebhookBasicConfig_builder{
-			Secret: proto.String(secret), Headers: []*apipb.HTTPHeader{apipb.HTTPHeader_builder{Key: "Authorization", Value: secret}.Build()},
+			Headers: []*apipb.HTTPHeader{apipb.HTTPHeader_builder{Key: "Authorization", Value: secret}.Build()},
 		}.Build()}.Build()}.Build()
 	}
 	webhookPrior, diags := webhookProtoToModel(ctx, webhookSettings("old-secret"), WebhookSettingsResourceModel{})
@@ -259,7 +259,6 @@ func TestSettingsSecretsUseAPIReferences(t *testing.T) {
 				"ReversingLabs password": riskAPI.GetLocalPlugins().GetReversingLabs().GetPassword(),
 				"remote plugin secret":   riskAPI.GetRemotePlugins()[0].GetSecret(),
 				"remote plugin header":   riskAPI.GetRemotePlugins()[0].GetHeaders()[0].GetValue(),
-				"webhook signing secret": webhookAPI.GetSoftwareApprovals().GetBasic().GetSecret(),
 				"webhook header":         webhookAPI.GetSoftwareApprovals().GetBasic().GetHeaders()[0].GetValue(),
 			}
 			for name, got := range values {
