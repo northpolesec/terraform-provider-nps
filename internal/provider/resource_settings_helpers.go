@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	apipb "buf.build/gen/go/northpolesec/workshop-api/protocolbuffers/go/workshop/v1"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -39,11 +40,21 @@ func stringPtrToTF(v *string) types.String {
 	return types.StringValue(*v)
 }
 
-func priorHeaderValue(key string, prior types.List) types.String {
+func priorHeaderValue(i int, headers []*apipb.HTTPHeader, prior types.List) types.String {
+	key := headers[i].GetKey()
+	occurrence := 0
+	for _, h := range headers[:i] {
+		if strings.EqualFold(key, h.GetKey()) {
+			occurrence++
+		}
+	}
 	for _, element := range prior.Elements() {
 		header := element.(types.Object)
 		if strings.EqualFold(key, priorString(header, "key").ValueString()) {
-			return priorString(header, "value")
+			if occurrence == 0 {
+				return priorString(header, "value")
+			}
+			occurrence--
 		}
 	}
 	return types.StringNull()

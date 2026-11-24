@@ -776,7 +776,7 @@ func riskRemotePluginsProtoToList(ctx context.Context, plugins []*apipb.RemoteRi
 			for j, h := range headers {
 				hobj, d := types.ObjectValue(riskHttpHeaderAttrTypes, map[string]attr.Value{
 					"key":      types.StringValue(h.GetKey()),
-					"value":    priorHeaderValue(h.GetKey(), priorHeaders(previous)),
+					"value":    priorHeaderValue(j, headers, priorHeaders(previous)),
 					"value_wo": types.StringNull(),
 				})
 				diags.Append(d...)

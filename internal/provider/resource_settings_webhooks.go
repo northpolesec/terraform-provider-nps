@@ -539,7 +539,7 @@ func webhookBasicValues(ctx context.Context, b *apipb.WebhookBasicConfig, prior 
 	if b != nil && len(b.GetHeaders()) > 0 {
 		hms := make([]webhookHeaderModel, len(b.GetHeaders()))
 		for i, h := range b.GetHeaders() {
-			hms[i] = webhookHeaderModel{Key: types.StringValue(h.GetKey()), Value: priorHeaderValue(h.GetKey(), priorHeaders(prior)), ValueWo: types.StringNull()}
+			hms[i] = webhookHeaderModel{Key: types.StringValue(h.GetKey()), Value: priorHeaderValue(i, b.GetHeaders(), priorHeaders(prior)), ValueWo: types.StringNull()}
 		}
 		l, d := types.ListValueFrom(ctx, webhookHeaderAttrTypesObject(), hms)
 		diags.Append(d...)
