@@ -92,13 +92,6 @@ func headerValueAttribute() schema.StringAttribute {
 	}
 }
 
-func headerValueForWrite(value, wo types.String) string {
-	if v := withWriteOnly(tfStringToPtr(value), wo); v != nil {
-		return *v
-	}
-	return ""
-}
-
 func withWriteOnly(value *string, wo types.String) *string {
 	if wo.IsNull() || wo.IsUnknown() {
 		return value

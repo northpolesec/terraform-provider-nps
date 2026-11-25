@@ -2,6 +2,7 @@
 package provider
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 
@@ -294,10 +295,8 @@ func (r *WebhookSettingsResource) Read(ctx context.Context, req resource.ReadReq
 }
 
 func (r *WebhookSettingsResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
-	// Disabling on destroy keeps each source's URL/secret server-side but stops
-	// deliveries, matching the documented "enabled" semantics. Start from the
-	// server copy: state lacks write-only header values, and the update replaces
-	// every source, also unmanaged ones.
+	// State lacks write-only headers. Read the server copy to keep their values
+	// and unmanaged sources when the update replaces all settings.
 	var state WebhookSettingsResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
@@ -402,7 +401,7 @@ func webhookBasicToProto(ctx context.Context, enabled types.Bool, url, secret, s
 		diags.Append(headers.ElementsAs(ctx, &hms, false)...)
 		hdrs = make([]*apipb.HTTPHeader, len(hms))
 		for i, hm := range hms {
-			hdrs[i] = apipb.HTTPHeader_builder{Key: hm.Key.ValueString(), Value: headerValueForWrite(hm.Value, hm.ValueWo)}.Build()
+			hdrs[i] = apipb.HTTPHeader_builder{Key: hm.Key.ValueString(), Value: cmp.Or(hm.ValueWo.ValueString(), hm.Value.ValueString())}.Build()
 		}
 	}
 

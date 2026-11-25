@@ -19,9 +19,6 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// settingsSecretServer is a fake Workshop API. An empty secret in a write keeps
-// the stored one, except a webhook header value when returnSecrets is set,
-// which models the current server.
 type settingsSecretServer struct {
 	svcpb.UnimplementedWorkshopServiceServer
 	mu            sync.Mutex
@@ -33,13 +30,7 @@ type settingsSecretServer struct {
 	webhooks      *apipb.WebhookSettings
 }
 
-func keepSecret(in *string, stored string) *string {
-	if (in == nil || *in == "") && stored != "" {
-		return proto.String(stored)
-	}
-	return in
-}
-
+// The clear-on-read server keeps stored header values on an empty write.
 func keepHeaders(in, stored []*apipb.HTTPHeader) {
 	for _, h := range in {
 		for _, s := range stored {
@@ -88,8 +79,6 @@ func (s *settingsSecretServer) UpdateChatSettings(_ context.Context, req *apipb.
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	in := proto.Clone(req.GetSlackBotSettings()).(*apipb.SlackBotSettings)
-	in.Token = keepSecret(in.Token, s.chat.GetToken())
-	in.HmacSigningSecret = keepSecret(in.HmacSigningSecret, s.chat.GetHmacSigningSecret())
 	s.chat = in
 	return apipb.UpdateChatSettingsResponse_builder{}.Build(), nil
 }
@@ -118,20 +107,6 @@ func (s *settingsSecretServer) UpdateRiskEngineSettings(_ context.Context, req *
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	in := proto.Clone(req.GetRiskEngineSettings()).(*apipb.RiskEngineSettings)
-	if vt := in.GetLocalPlugins().GetVirusTotal(); vt != nil {
-		vt.ApiKey = keepSecret(vt.ApiKey, s.risk.GetLocalPlugins().GetVirusTotal().GetApiKey())
-	}
-	if rl := in.GetLocalPlugins().GetReversingLabs(); rl != nil {
-		rl.Password = keepSecret(rl.Password, s.risk.GetLocalPlugins().GetReversingLabs().GetPassword())
-	}
-	for _, p := range in.GetRemotePlugins() {
-		for _, stored := range s.risk.GetRemotePlugins() {
-			if p.GetUuid() != "" && p.GetUuid() == stored.GetUuid() {
-				p.Secret = keepSecret(p.Secret, stored.GetSecret())
-				keepHeaders(p.GetHeaders(), stored.GetHeaders())
-			}
-		}
-	}
 	s.risk = in
 	if s.assignUUIDs {
 		s.fillUUIDs()
@@ -265,8 +240,6 @@ func TestSettingsSecretsPlan(t *testing.T) {
 							if basic.GetEnabled() {
 								return fmt.Errorf("webhook still enabled after destroy")
 							}
-						}
-						for _, basic := range webhookBasics(api.webhooks) {
 							if got := basic.GetHeaders()[0].GetValue(); got != "wo-2" {
 								return fmt.Errorf("header value after destroy: got %q, want \"wo-2\"", got)
 							}

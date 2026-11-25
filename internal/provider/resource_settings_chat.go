@@ -7,11 +7,9 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
-	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/identityschema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
-	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
@@ -139,13 +137,14 @@ func (r *ChatSettingsResource) Configure(ctx context.Context, req resource.Confi
 }
 
 func (r *ChatSettingsResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
-	var data ChatSettingsResourceModel
+	var data, cfg ChatSettingsResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
+	resp.Diagnostics.Append(req.Config.Get(ctx, &cfg)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	slack, d := chatSlackForWrite(ctx, data.Slack, req.Config)
+	slack, d := chatSlackFromObject(ctx, cfg.Slack)
 	resp.Diagnostics.Append(d...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -189,24 +188,21 @@ func (r *ChatSettingsResource) Read(ctx context.Context, req resource.ReadReques
 }
 
 func (r *ChatSettingsResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var plan, state ChatSettingsResourceModel
+	var plan, state, cfg ChatSettingsResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	resp.Diagnostics.Append(req.Config.Get(ctx, &cfg)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	// UpdateChatSettings replaces the chat type via oneof. If the plan has
-	// no slack block but the state did, we delete; otherwise we push the
-	// plan's slack block.
-	planSlack, d := chatSlackForWrite(ctx, plan.Slack, req.Config)
+	planSlack, d := chatSlackFromObject(ctx, cfg.Slack)
 	resp.Diagnostics.Append(d...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
 	if planSlack == nil {
-		// User removed the slack block. Delete server-side configuration.
 		if !state.Slack.IsNull() {
 			delReq := apipb.DeleteChatSettingsRequest_builder{
 				ChatType: apipb.DeleteChatSettingsRequest_CHAT_TYPE_SLACK.Enum(),
@@ -273,18 +269,6 @@ func chatProtoToModel(ctx context.Context, s *apipb.SlackBotSettings, prior Chat
 	return ChatSettingsResourceModel{Slack: obj, SecretsWoVersion: prior.SecretsWoVersion}, d
 }
 
-func chatSlackForWrite(ctx context.Context, plan types.Object, config tfsdk.Config) (*apipb.SlackBotSettings, diag.Diagnostics) {
-	slack, diags := chatSlackFromObject(ctx, plan)
-	if slack == nil || diags.HasError() {
-		return slack, diags
-	}
-	var cfg ChatSettingsSlackModel
-	diags.Append(config.GetAttribute(ctx, path.Root("slack"), &cfg)...)
-	slack.Token = withWriteOnly(slack.Token, cfg.TokenWo)
-	slack.HmacSigningSecret = withWriteOnly(slack.HmacSigningSecret, cfg.HmacSigningSecretWo)
-	return slack, diags
-}
-
 func chatSlackFromObject(ctx context.Context, obj types.Object) (*apipb.SlackBotSettings, diag.Diagnostics) {
 	if obj.IsNull() || obj.IsUnknown() {
 		return nil, nil
@@ -296,10 +280,10 @@ func chatSlackFromObject(ctx context.Context, obj types.Object) (*apipb.SlackBot
 	}
 	return apipb.SlackBotSettings_builder{
 		Enabled:           tfBoolToPtr(m.Enabled),
-		Token:             tfStringToPtr(m.Token),
+		Token:             withWriteOnly(tfStringToPtr(m.Token), m.TokenWo),
 		Workspace:         tfStringToPtr(m.Workspace),
 		UseEmojis:         tfBoolToPtr(m.UseEmojis),
-		HmacSigningSecret: tfStringToPtr(m.HmacSigningSecret),
+		HmacSigningSecret: withWriteOnly(tfStringToPtr(m.HmacSigningSecret), m.HmacSigningSecretWo),
 		UrlRedirectCookie: tfStringToPtr(m.UrlRedirectCookie),
 	}.Build(), nil
 }

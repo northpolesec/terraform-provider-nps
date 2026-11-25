@@ -2,6 +2,7 @@
 package provider
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 
@@ -317,12 +318,7 @@ func (r *RiskEngineSettingsResource) Configure(ctx context.Context, req resource
 	r.client = pd.Client
 }
 
-// fetchRiskEngineSettings reads the current server-side settings so
-// authoritative values can be written to Terraform state after a Create or
-// Update. Required because uuid is Optional+Computed on both blockable_rules
-// rules and remote_plugins: the plan carries an unknown for every entry the
-// user did not pin, and the proto requires that the server-assigned UUID be
-// echoed back on later writes to keep rule identity stable.
+// Fetch assigned UUIDs for entries whose planned UUIDs were unknown.
 func (r *RiskEngineSettingsResource) fetchRiskEngineSettings(ctx context.Context, prior RiskEngineSettingsResourceModel, diags *diag.Diagnostics) (RiskEngineSettingsResourceModel, bool) {
 	ret, err := r.client.GetRiskEngineSettings(ctx, apipb.GetRiskEngineSettingsRequest_builder{}.Build())
 	if err != nil {
@@ -388,8 +384,6 @@ func (r *RiskEngineSettingsResource) Update(ctx context.Context, req resource.Up
 		return
 	}
 
-	// UpdateRiskEngineSettings replaces the whole RiskEngineSettings message;
-	// it is not presence-sensitive, so we always send the full plan.
 	settings, d := riskEngineForWrite(ctx, &plan, req.Config)
 	resp.Diagnostics.Append(d...)
 	if resp.Diagnostics.HasError() {
@@ -401,8 +395,6 @@ func (r *RiskEngineSettingsResource) Update(ctx context.Context, req resource.Up
 		return
 	}
 
-	// Refresh from the server so state carries the server-assigned UUIDs rather
-	// than the plan's unknowns.
 	final, ok := r.fetchRiskEngineSettings(ctx, plan, &resp.Diagnostics)
 	if !ok {
 		return
@@ -436,8 +428,6 @@ func (r *RiskEngineSettingsResource) IdentitySchema(ctx context.Context, req res
 	}
 }
 
-// --- proto/model conversion ---
-
 func riskEngineProtoToModel(ctx context.Context, s *apipb.RiskEngineSettings, prior RiskEngineSettingsResourceModel) (RiskEngineSettingsResourceModel, diag.Diagnostics) {
 	var diags diag.Diagnostics
 	if s == nil {
@@ -465,6 +455,7 @@ func riskEngineProtoToModel(ctx context.Context, s *apipb.RiskEngineSettings, pr
 }
 
 func riskEngineForWrite(ctx context.Context, plan *RiskEngineSettingsResourceModel, config tfsdk.Config) (*apipb.RiskEngineSettings, diag.Diagnostics) {
+	// Config omits computed UUIDs; overlay only secrets onto the planned request.
 	settings, diags := riskEngineModelToProto(ctx, plan)
 	if diags.HasError() {
 		return nil, diags
@@ -475,33 +466,26 @@ func riskEngineForWrite(ctx context.Context, plan *RiskEngineSettingsResourceMod
 		return nil, diags
 	}
 
+	configured, d := riskEngineModelToProto(ctx, &cfg)
+	diags.Append(d...)
+	if diags.HasError() {
+		return nil, diags
+	}
 	if vt := settings.GetLocalPlugins().GetVirusTotal(); vt != nil {
-		var m riskVirusTotalModel
-		diags.Append(config.GetAttribute(ctx, path.Root("local_plugins").AtName("virus_total"), &m)...)
-		vt.ApiKey = withWriteOnly(vt.ApiKey, m.ApiKeyWo)
+		vt.ApiKey = configured.GetLocalPlugins().GetVirusTotal().ApiKey
 	}
 	if rl := settings.GetLocalPlugins().GetReversingLabs(); rl != nil {
-		var m riskReversingLabsModel
-		diags.Append(config.GetAttribute(ctx, path.Root("local_plugins").AtName("reversing_labs"), &m)...)
-		rl.Password = withWriteOnly(rl.Password, m.PasswordWo)
-	}
-
-	var plugins []riskRemotePluginModel
-	if !cfg.RemotePlugins.IsNull() && !cfg.RemotePlugins.IsUnknown() {
-		diags.Append(cfg.RemotePlugins.ElementsAs(ctx, &plugins, false)...)
+		rl.Password = configured.GetLocalPlugins().GetReversingLabs().Password
 	}
 	for i, p := range settings.GetRemotePlugins() {
-		if i >= len(plugins) {
+		if i >= len(configured.GetRemotePlugins()) {
 			break
 		}
-		p.Secret = withWriteOnly(p.Secret, plugins[i].SecretWo)
-		var headers []riskHttpHeaderModel
-		if !plugins[i].Headers.IsNull() && !plugins[i].Headers.IsUnknown() {
-			diags.Append(plugins[i].Headers.ElementsAs(ctx, &headers, false)...)
-		}
+		configPlugin := configured.GetRemotePlugins()[i]
+		p.Secret = configPlugin.Secret
 		for j, h := range p.GetHeaders() {
-			if j < len(headers) {
-				h.SetValue(headerValueForWrite(headers[j].Value, headers[j].ValueWo))
+			if j < len(configPlugin.GetHeaders()) {
+				h.SetValue(configPlugin.GetHeaders()[j].GetValue())
 			}
 		}
 	}
@@ -639,7 +623,7 @@ func riskVirusTotalObjectToProto(ctx context.Context, obj types.Object) (*apipb.
 
 	return apipb.VirusTotalPluginSettings_builder{
 		Enabled:         tfBoolToPtr(m.Enabled),
-		ApiKey:          tfStringToPtr(m.ApiKey),
+		ApiKey:          withWriteOnly(tfStringToPtr(m.ApiKey), m.ApiKeyWo),
 		CacheTtl:        cacheTtl,
 		NumCacheEntries: tfInt64ToUint32Ptr(m.NumCacheEntries),
 		ExcludeEngines:  engines,
@@ -682,7 +666,7 @@ func riskReversingLabsObjectToProto(ctx context.Context, obj types.Object) (*api
 	return apipb.ReversingLabsPluginSettings_builder{
 		Enabled:         tfBoolToPtr(m.Enabled),
 		Username:        tfStringToPtr(m.Username),
-		Password:        tfStringToPtr(m.Password),
+		Password:        withWriteOnly(tfStringToPtr(m.Password), m.PasswordWo),
 		CacheTtl:        cacheTtl,
 		NumCacheEntries: tfInt64ToUint32Ptr(m.NumCacheEntries),
 		FilterExpr:      m.FilterExpr.ValueString(),
@@ -839,7 +823,7 @@ func riskRemotePluginsListToProto(ctx context.Context, list types.List) ([]*apip
 			for j, hm := range hms {
 				headers[j] = apipb.HTTPHeader_builder{
 					Key:   hm.Key.ValueString(),
-					Value: hm.Value.ValueString(),
+					Value: cmp.Or(hm.ValueWo.ValueString(), hm.Value.ValueString()),
 				}.Build()
 			}
 		}
@@ -852,7 +836,7 @@ func riskRemotePluginsListToProto(ctx context.Context, list types.List) ([]*apip
 			Url:        tfStringToPtr(m.Url),
 			Headers:    headers,
 			Ttl:        ttl,
-			Secret:     tfStringToPtr(m.Secret),
+			Secret:     withWriteOnly(tfStringToPtr(m.Secret), m.SecretWo),
 			FilterExpr: m.FilterExpr.ValueString(),
 		}.Build()
 	}
