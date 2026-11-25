@@ -2,6 +2,7 @@
 package provider
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 
@@ -75,13 +76,15 @@ type webhookSoftwareModel struct {
 }
 
 type webhookHeaderModel struct {
-	Key   types.String `tfsdk:"key"`
-	Value types.String `tfsdk:"value"`
+	Key     types.String `tfsdk:"key"`
+	Value   types.String `tfsdk:"value"`
+	ValueWo types.String `tfsdk:"value_wo"`
 }
 
 var webhookHeaderAttrTypes = map[string]attr.Type{
-	"key":   types.StringType,
-	"value": types.StringType,
+	"key":      types.StringType,
+	"value":    types.StringType,
+	"value_wo": types.StringType,
 }
 
 var webhookHeadersListType = types.ListType{ElemType: types.ObjectType{AttrTypes: webhookHeaderAttrTypes}}
@@ -143,19 +146,16 @@ func webhookBasicAttributes(extra map[string]schema.Attribute) map[string]schema
 			Sensitive:           true,
 			WriteOnly:           true,
 		},
-		"secret_wo_version": schema.StringAttribute{
-			Description:         "Trigger for rotating secret_wo. Since write-only values aren't stored in state, Terraform can't detect a changed secret_wo on its own; change this value whenever secret_wo changes to force the new secret to be sent.",
-			MarkdownDescription: "Trigger for rotating `secret_wo`. Since write-only values aren't stored in state, Terraform can't detect a changed `secret_wo` on its own; change this value whenever `secret_wo` changes to force the new secret to be sent.",
-			Optional:            true,
-		},
+		"secret_wo_version": writeOnlyVersionAttribute("new `secret_wo` and header `value_wo` values"),
 		"headers": schema.ListNestedAttribute{
 			Description:         "Additional HTTP headers attached to every delivery.",
 			MarkdownDescription: "Additional HTTP headers attached to every delivery.",
 			Optional:            true,
 			NestedObject: schema.NestedAttributeObject{
 				Attributes: map[string]schema.Attribute{
-					"key":   schema.StringAttribute{Required: true},
-					"value": schema.StringAttribute{Required: true, Sensitive: true},
+					"key":      schema.StringAttribute{Required: true},
+					"value":    headerValueAttribute(),
+					"value_wo": writeOnlySecretAttribute("value", "secret_wo_version"),
 				},
 			},
 		},
@@ -295,27 +295,30 @@ func (r *WebhookSettingsResource) Read(ctx context.Context, req resource.ReadReq
 }
 
 func (r *WebhookSettingsResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
-	// Disabling on destroy keeps each source's URL/secret server-side but stops
-	// deliveries, matching the documented "enabled" semantics.
+	// State lacks write-only headers. Read the server copy to keep their values
+	// and unmanaged sources when the update replaces all settings.
 	var state WebhookSettingsResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	settings, d := webhookSettingsToProto(ctx, state)
-	resp.Diagnostics.Append(d...)
-	if resp.Diagnostics.HasError() {
+	ret, err := r.client.GetWebhookSettings(ctx, apipb.GetWebhookSettingsRequest_builder{}.Build())
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Failed to get webhook settings: %v", err))
 		return
 	}
-
-	for _, b := range []*apipb.WebhookBasicConfig{
-		settings.GetAuditEvents().GetBasic(),
-		settings.GetSignalReports().GetBasic(),
-		settings.GetSoftwareApprovals().GetBasic(),
+	settings := ret.GetSettings()
+	for _, source := range []struct {
+		managed bool
+		basic   *apipb.WebhookBasicConfig
+	}{
+		{!state.AuditEvents.IsNull(), settings.GetAuditEvents().GetBasic()},
+		{!state.SignalReports.IsNull(), settings.GetSignalReports().GetBasic()},
+		{!state.SoftwareApprovals.IsNull(), settings.GetSoftwareApprovals().GetBasic()},
 	} {
-		if b != nil {
-			b.SetEnabled(false)
+		if source.managed && source.basic != nil {
+			source.basic.SetEnabled(false)
 		}
 	}
 
@@ -398,7 +401,7 @@ func webhookBasicToProto(ctx context.Context, enabled types.Bool, url, secret, s
 		diags.Append(headers.ElementsAs(ctx, &hms, false)...)
 		hdrs = make([]*apipb.HTTPHeader, len(hms))
 		for i, hm := range hms {
-			hdrs[i] = apipb.HTTPHeader_builder{Key: hm.Key.ValueString(), Value: hm.Value.ValueString()}.Build()
+			hdrs[i] = apipb.HTTPHeader_builder{Key: hm.Key.ValueString(), Value: cmp.Or(hm.ValueWo.ValueString(), hm.Value.ValueString())}.Build()
 		}
 	}
 
@@ -535,7 +538,7 @@ func webhookBasicValues(ctx context.Context, b *apipb.WebhookBasicConfig, prior 
 	if b != nil && len(b.GetHeaders()) > 0 {
 		hms := make([]webhookHeaderModel, len(b.GetHeaders()))
 		for i, h := range b.GetHeaders() {
-			hms[i] = webhookHeaderModel{Key: types.StringValue(h.GetKey()), Value: types.StringValue(h.GetValue())}
+			hms[i] = webhookHeaderModel{Key: types.StringValue(h.GetKey()), Value: priorHeaderValue(i, b.GetHeaders(), priorHeaders(prior)), ValueWo: types.StringNull()}
 		}
 		l, d := types.ListValueFrom(ctx, webhookHeaderAttrTypesObject(), hms)
 		diags.Append(d...)

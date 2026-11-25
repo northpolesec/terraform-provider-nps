@@ -29,6 +29,7 @@ resource "nps_workshop_settings_chat" "settings" {
 
 ### Optional
 
+- `secrets_wo_version` (String) Change this value to send new `token_wo` and `hmac_signing_secret_wo` values. A version change cannot clear a secret, and import cannot recover one.
 - `slack` (Attributes) Slack bot integration settings. Setting this configures the Slack chat type. (see [below for nested schema](#nestedatt--slack))
 
 <a id="nestedatt--slack"></a>
@@ -37,8 +38,10 @@ resource "nps_workshop_settings_chat" "settings" {
 Optional:
 
 - `enabled` (Boolean) Whether the Slack bot is enabled.
-- `hmac_signing_secret` (String, Sensitive) The HMAC signing secret for the Slack bot. Sensitive.
-- `token` (String, Sensitive) The Slack token for the bot to connect to the workspace. Sensitive.
+- `hmac_signing_secret` (String, Sensitive, Deprecated) Slack HMAC signing secret. Stored in state. Conflicts with `hmac_signing_secret_wo`.
+- `hmac_signing_secret_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Write-only `hmac_signing_secret`. Not stored in state. Change `secrets_wo_version` to send a new value. Needs Terraform 1.11+.
+- `token` (String, Sensitive, Deprecated) Slack bot token. Stored in state. Conflicts with `token_wo`.
+- `token_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Write-only `token`. Not stored in state. Change `secrets_wo_version` to send a new value. Needs Terraform 1.11+.
 - `url_redirect_cookie` (String) URL redirect cookie name.
 - `use_emojis` (Boolean) Whether to use emojis in Slack messages.
 - `workspace` (String) The Slack workspace to connect to.

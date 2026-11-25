@@ -3,10 +3,17 @@ package provider
 
 import (
 	"context"
+	"fmt"
 	"regexp"
+	"strings"
 	"time"
 
+	apipb "buf.build/gen/go/northpolesec/workshop-api/protocolbuffers/go/workshop/v1"
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/path"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"google.golang.org/protobuf/types/known/durationpb"
 )
@@ -31,6 +38,65 @@ func stringPtrToTF(v *string) types.String {
 		return types.StringNull()
 	}
 	return types.StringValue(*v)
+}
+
+func priorHeaderValue(i int, headers []*apipb.HTTPHeader, prior types.List) types.String {
+	key := headers[i].GetKey()
+	occurrence := 0
+	for _, h := range headers[:i] {
+		if strings.EqualFold(key, h.GetKey()) {
+			occurrence++
+		}
+	}
+	for _, element := range prior.Elements() {
+		header := element.(types.Object)
+		if strings.EqualFold(key, priorString(header, "key").ValueString()) {
+			if occurrence == 0 {
+				return priorString(header, "value")
+			}
+			occurrence--
+		}
+	}
+	return types.StringNull()
+}
+
+func writeOnlySecretAttribute(plain, version string) schema.StringAttribute {
+	const text = "Write-only %s. Not stored in state. Change %s to send a new value. Needs Terraform 1.11+."
+	return schema.StringAttribute{
+		Description:         fmt.Sprintf(text, plain, version),
+		MarkdownDescription: fmt.Sprintf(text, "`"+plain+"`", "`"+version+"`"),
+		Optional:            true,
+		Sensitive:           true,
+		WriteOnly:           true,
+		Validators:          []validator.String{stringvalidator.ConflictsWith(path.MatchRelative().AtParent().AtName(plain))},
+	}
+}
+
+func writeOnlyVersionAttribute(attributes string) schema.StringAttribute {
+	const text = "Change this value to send %s. A version change cannot clear a secret, and import cannot recover one."
+	return schema.StringAttribute{
+		Description:         fmt.Sprintf(text, strings.ReplaceAll(attributes, "`", "")),
+		MarkdownDescription: fmt.Sprintf(text, attributes),
+		Optional:            true,
+	}
+}
+
+func headerValueAttribute() schema.StringAttribute {
+	return schema.StringAttribute{
+		Description:         "HTTP header value. Stored in state. Set exactly one of value or value_wo.",
+		MarkdownDescription: "HTTP header value. Stored in state. Set exactly one of `value` or `value_wo`.",
+		Optional:            true,
+		Sensitive:           true,
+		DeprecationMessage:  "Use value_wo.",
+		Validators:          []validator.String{stringvalidator.AtLeastOneOf(path.MatchRelative().AtParent().AtName("value_wo"))},
+	}
+}
+
+func withWriteOnly(value *string, wo types.String) *string {
+	if wo.IsNull() || wo.IsUnknown() {
+		return value
+	}
+	return tfStringToPtr(wo)
 }
 
 func tfStringToPtr(v types.String) *string {

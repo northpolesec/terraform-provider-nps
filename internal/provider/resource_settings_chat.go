@@ -36,25 +36,30 @@ type ChatSettingsIdentityModel struct {
 }
 
 type ChatSettingsResourceModel struct {
-	Slack types.Object `tfsdk:"slack"`
+	Slack            types.Object `tfsdk:"slack"`
+	SecretsWoVersion types.String `tfsdk:"secrets_wo_version"`
 }
 
 type ChatSettingsSlackModel struct {
-	Enabled           types.Bool   `tfsdk:"enabled"`
-	Token             types.String `tfsdk:"token"`
-	Workspace         types.String `tfsdk:"workspace"`
-	UseEmojis         types.Bool   `tfsdk:"use_emojis"`
-	HmacSigningSecret types.String `tfsdk:"hmac_signing_secret"`
-	UrlRedirectCookie types.String `tfsdk:"url_redirect_cookie"`
+	Enabled             types.Bool   `tfsdk:"enabled"`
+	Token               types.String `tfsdk:"token"`
+	TokenWo             types.String `tfsdk:"token_wo"`
+	Workspace           types.String `tfsdk:"workspace"`
+	UseEmojis           types.Bool   `tfsdk:"use_emojis"`
+	HmacSigningSecret   types.String `tfsdk:"hmac_signing_secret"`
+	HmacSigningSecretWo types.String `tfsdk:"hmac_signing_secret_wo"`
+	UrlRedirectCookie   types.String `tfsdk:"url_redirect_cookie"`
 }
 
 var chatSlackObjectAttrTypes = map[string]attr.Type{
-	"enabled":             types.BoolType,
-	"token":               types.StringType,
-	"workspace":           types.StringType,
-	"use_emojis":          types.BoolType,
-	"hmac_signing_secret": types.StringType,
-	"url_redirect_cookie": types.StringType,
+	"enabled":                types.BoolType,
+	"token":                  types.StringType,
+	"token_wo":               types.StringType,
+	"workspace":              types.StringType,
+	"use_emojis":             types.BoolType,
+	"hmac_signing_secret":    types.StringType,
+	"hmac_signing_secret_wo": types.StringType,
+	"url_redirect_cookie":    types.StringType,
 }
 
 func (r *ChatSettingsResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -78,11 +83,13 @@ func (r *ChatSettingsResource) Schema(ctx context.Context, req resource.SchemaRe
 						Optional:            true,
 					},
 					"token": schema.StringAttribute{
-						Description:         "The Slack token for the bot to connect to the workspace. Sensitive.",
-						MarkdownDescription: "The Slack token for the bot to connect to the workspace. Sensitive.",
+						Description:         "Slack bot token. Stored in state. Conflicts with token_wo.",
+						MarkdownDescription: "Slack bot token. Stored in state. Conflicts with `token_wo`.",
 						Optional:            true,
 						Sensitive:           true,
+						DeprecationMessage:  "Use token_wo.",
 					},
+					"token_wo": writeOnlySecretAttribute("token", "secrets_wo_version"),
 					"workspace": schema.StringAttribute{
 						Description:         "The Slack workspace to connect to.",
 						MarkdownDescription: "The Slack workspace to connect to.",
@@ -94,11 +101,13 @@ func (r *ChatSettingsResource) Schema(ctx context.Context, req resource.SchemaRe
 						Optional:            true,
 					},
 					"hmac_signing_secret": schema.StringAttribute{
-						Description:         "The HMAC signing secret for the Slack bot. Sensitive.",
-						MarkdownDescription: "The HMAC signing secret for the Slack bot. Sensitive.",
+						Description:         "Slack HMAC signing secret. Stored in state. Conflicts with hmac_signing_secret_wo.",
+						MarkdownDescription: "Slack HMAC signing secret. Stored in state. Conflicts with `hmac_signing_secret_wo`.",
 						Optional:            true,
 						Sensitive:           true,
+						DeprecationMessage:  "Use hmac_signing_secret_wo.",
 					},
+					"hmac_signing_secret_wo": writeOnlySecretAttribute("hmac_signing_secret", "secrets_wo_version"),
 					"url_redirect_cookie": schema.StringAttribute{
 						Description:         "URL redirect cookie name.",
 						MarkdownDescription: "URL redirect cookie name.",
@@ -106,6 +115,7 @@ func (r *ChatSettingsResource) Schema(ctx context.Context, req resource.SchemaRe
 					},
 				},
 			},
+			"secrets_wo_version": writeOnlyVersionAttribute("new `token_wo` and `hmac_signing_secret_wo` values"),
 		},
 	}
 }
@@ -127,13 +137,14 @@ func (r *ChatSettingsResource) Configure(ctx context.Context, req resource.Confi
 }
 
 func (r *ChatSettingsResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
-	var data ChatSettingsResourceModel
+	var data, cfg ChatSettingsResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
+	resp.Diagnostics.Append(req.Config.Get(ctx, &cfg)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	slack, d := chatSlackFromObject(ctx, data.Slack)
+	slack, d := chatSlackFromObject(ctx, cfg.Slack)
 	resp.Diagnostics.Append(d...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -154,13 +165,19 @@ func (r *ChatSettingsResource) Create(ctx context.Context, req resource.CreateRe
 }
 
 func (r *ChatSettingsResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
+	var prior ChatSettingsResourceModel
+	resp.Diagnostics.Append(req.State.Get(ctx, &prior)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
 	ret, err := r.client.GetChatSettings(ctx, apipb.GetChatSettingsRequest_builder{}.Build())
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Failed to get chat settings: %v", err))
 		return
 	}
 
-	data, d := chatProtoToModel(ctx, ret.GetSlackBotSettings())
+	data, d := chatProtoToModel(ctx, ret.GetSlackBotSettings(), prior)
 	resp.Diagnostics.Append(d...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -171,24 +188,21 @@ func (r *ChatSettingsResource) Read(ctx context.Context, req resource.ReadReques
 }
 
 func (r *ChatSettingsResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var plan, state ChatSettingsResourceModel
+	var plan, state, cfg ChatSettingsResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	resp.Diagnostics.Append(req.Config.Get(ctx, &cfg)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	// UpdateChatSettings replaces the chat type via oneof. If the plan has
-	// no slack block but the state did, we delete; otherwise we push the
-	// plan's slack block.
-	planSlack, d := chatSlackFromObject(ctx, plan.Slack)
+	planSlack, d := chatSlackFromObject(ctx, cfg.Slack)
 	resp.Diagnostics.Append(d...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
 	if planSlack == nil {
-		// User removed the slack block. Delete server-side configuration.
 		if !state.Slack.IsNull() {
 			delReq := apipb.DeleteChatSettingsRequest_builder{
 				ChatType: apipb.DeleteChatSettingsRequest_CHAT_TYPE_SLACK.Enum(),
@@ -220,7 +234,8 @@ func (r *ChatSettingsResource) Delete(ctx context.Context, req resource.DeleteRe
 
 func (r *ChatSettingsResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resp.Diagnostics.Append(resp.State.Set(ctx, &ChatSettingsResourceModel{
-		Slack: types.ObjectNull(chatSlackObjectAttrTypes),
+		Slack:            types.ObjectNull(chatSlackObjectAttrTypes),
+		SecretsWoVersion: types.StringNull(),
 	})...)
 }
 
@@ -234,21 +249,24 @@ func (r *ChatSettingsResource) IdentitySchema(ctx context.Context, req resource.
 	}
 }
 
-func chatProtoToModel(ctx context.Context, s *apipb.SlackBotSettings) (ChatSettingsResourceModel, diag.Diagnostics) {
+func chatProtoToModel(ctx context.Context, s *apipb.SlackBotSettings, prior ChatSettingsResourceModel) (ChatSettingsResourceModel, diag.Diagnostics) {
 	if s == nil {
 		return ChatSettingsResourceModel{
-			Slack: types.ObjectNull(chatSlackObjectAttrTypes),
+			Slack:            types.ObjectNull(chatSlackObjectAttrTypes),
+			SecretsWoVersion: prior.SecretsWoVersion,
 		}, nil
 	}
 	obj, d := types.ObjectValue(chatSlackObjectAttrTypes, map[string]attr.Value{
-		"enabled":             boolPtrToTF(s.Enabled),
-		"token":               stringPtrToTF(s.Token),
-		"workspace":           stringPtrToTF(s.Workspace),
-		"use_emojis":          boolPtrToTF(s.UseEmojis),
-		"hmac_signing_secret": stringPtrToTF(s.HmacSigningSecret),
-		"url_redirect_cookie": stringPtrToTF(s.UrlRedirectCookie),
+		"enabled":                boolPtrToTF(s.Enabled),
+		"token":                  priorString(prior.Slack, "token"),
+		"token_wo":               types.StringNull(),
+		"workspace":              stringPtrToTF(s.Workspace),
+		"use_emojis":             boolPtrToTF(s.UseEmojis),
+		"hmac_signing_secret":    priorString(prior.Slack, "hmac_signing_secret"),
+		"hmac_signing_secret_wo": types.StringNull(),
+		"url_redirect_cookie":    stringPtrToTF(s.UrlRedirectCookie),
 	})
-	return ChatSettingsResourceModel{Slack: obj}, d
+	return ChatSettingsResourceModel{Slack: obj, SecretsWoVersion: prior.SecretsWoVersion}, d
 }
 
 func chatSlackFromObject(ctx context.Context, obj types.Object) (*apipb.SlackBotSettings, diag.Diagnostics) {
@@ -262,10 +280,10 @@ func chatSlackFromObject(ctx context.Context, obj types.Object) (*apipb.SlackBot
 	}
 	return apipb.SlackBotSettings_builder{
 		Enabled:           tfBoolToPtr(m.Enabled),
-		Token:             tfStringToPtr(m.Token),
+		Token:             withWriteOnly(tfStringToPtr(m.Token), m.TokenWo),
 		Workspace:         tfStringToPtr(m.Workspace),
 		UseEmojis:         tfBoolToPtr(m.UseEmojis),
-		HmacSigningSecret: tfStringToPtr(m.HmacSigningSecret),
+		HmacSigningSecret: withWriteOnly(tfStringToPtr(m.HmacSigningSecret), m.HmacSigningSecretWo),
 		UrlRedirectCookie: tfStringToPtr(m.UrlRedirectCookie),
 	}.Build(), nil
 }

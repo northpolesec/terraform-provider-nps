@@ -149,7 +149,7 @@ func TestRiskEngineRoundtrip(t *testing.T) {
 		},
 	}.Build()
 
-	model, diags := riskEngineProtoToModel(ctx, original)
+	model, diags := riskEngineProtoToModel(ctx, original, RiskEngineSettingsResourceModel{})
 	if diags.HasError() {
 		t.Fatalf("unexpected diagnostics: %v", diags)
 	}
@@ -166,8 +166,8 @@ func TestRiskEngineRoundtrip(t *testing.T) {
 		t.Errorf("expected 5s plugin_timeout, got %v", round.GetPluginTimeout().AsDuration())
 	}
 	vtOut := round.GetLocalPlugins().GetVirusTotal()
-	if vtOut == nil || vtOut.GetApiKey() != "vt-api-key" {
-		t.Errorf("expected api_key=vt-api-key, got %v", vtOut)
+	if vtOut == nil || vtOut.GetApiKey() != "" {
+		t.Errorf("expected empty api_key, got %v", vtOut)
 	}
 	if vtOut.GetCacheTtl().AsDuration().Minutes() != 30 {
 		t.Errorf("expected 30m cache_ttl, got %v", vtOut.GetCacheTtl().AsDuration())
@@ -188,6 +188,53 @@ func TestRiskEngineRoundtrip(t *testing.T) {
 	}
 	if len(rp[0].GetHeaders()) != 1 || rp[0].GetHeaders()[0].GetKey() != "X-Tenant" {
 		t.Errorf("unexpected headers after roundtrip: %v", rp[0].GetHeaders())
+	}
+
+	for _, apiValue := range []string{"", "api-secret"} {
+		t.Run("header values survive refresh/api="+apiValue, func(t *testing.T) {
+			ctx := t.Context()
+			prior, d := types.ListValueFrom(ctx, riskHttpHeaderObjectType, []riskHttpHeaderModel{
+				{Key: types.StringValue("X-Tenant"), Value: types.StringValue("first")},
+				{Key: types.StringValue("X-Other"), Value: types.StringValue("other")},
+				{Key: types.StringValue("x-tenant"), Value: types.StringValue("second")},
+			})
+			if d.HasError() {
+				t.Fatal(d)
+			}
+			plugins, d := types.ListValueFrom(ctx, riskRemotePluginObjectType, []riskRemotePluginModel{
+				{Uuid: types.StringValue("plugin-id"), Headers: prior},
+			})
+			if d.HasError() {
+				t.Fatal(d)
+			}
+			headers := []*apipb.HTTPHeader{
+				apipb.HTTPHeader_builder{Key: "x-other", Value: apiValue}.Build(),
+				apipb.HTTPHeader_builder{Key: "x-tenant", Value: apiValue}.Build(),
+				apipb.HTTPHeader_builder{Key: "X-TENANT", Value: apiValue}.Build(),
+				apipb.HTTPHeader_builder{Key: "X-New", Value: apiValue}.Build(),
+			}
+			refreshed, d := riskRemotePluginsProtoToList(ctx, []*apipb.RemoteRiskEnginePluginSettings{
+				apipb.RemoteRiskEnginePluginSettings_builder{Uuid: proto.String("plugin-id"), Headers: headers}.Build(),
+			}, plugins)
+			if d.HasError() {
+				t.Fatal(d)
+			}
+			webhook, d := webhookBasicValues(ctx, apipb.WebhookBasicConfig_builder{Headers: headers}.Build(),
+				types.ObjectValueMust(map[string]attr.Type{"headers": prior.Type(ctx)}, map[string]attr.Value{"headers": prior}))
+			if d.HasError() {
+				t.Fatal(d)
+			}
+			for name, got := range map[string]types.List{
+				"plugin":  priorHeaders(refreshed.Elements()[0].(types.Object)),
+				"webhook": webhook["headers"].(types.List),
+			} {
+				for i, want := range []types.String{types.StringValue("other"), types.StringValue("first"), types.StringValue("second"), types.StringNull()} {
+					if value := priorString(got.Elements()[i].(types.Object), "value"); !value.Equal(want) {
+						t.Errorf("%s header %d lost its prior value on refresh: got %s, want %s", name, i, value, want)
+					}
+				}
+			}
+		})
 	}
 }
 
@@ -257,7 +304,7 @@ func TestRiskEngineOnlyEvaluateBlockedEventsRoundtrip(t *testing.T) {
 		OnlyEvaluateBlockedEvents: proto.Bool(true),
 	}.Build()
 
-	model, diags := riskEngineProtoToModel(ctx, original)
+	model, diags := riskEngineProtoToModel(ctx, original, RiskEngineSettingsResourceModel{})
 	if diags.HasError() {
 		t.Fatalf("unexpected diagnostics: %v", diags)
 	}

@@ -2,6 +2,7 @@
 package provider
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/identityschema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
@@ -44,6 +46,7 @@ type RiskEngineSettingsResourceModel struct {
 	LocalPlugins              types.Object `tfsdk:"local_plugins"`
 	RemotePlugins             types.List   `tfsdk:"remote_plugins"`
 	OnlyEvaluateBlockedEvents types.Bool   `tfsdk:"only_evaluate_blocked_events"`
+	SecretsWoVersion          types.String `tfsdk:"secrets_wo_version"`
 }
 
 type riskLocalPluginsModel struct {
@@ -55,6 +58,7 @@ type riskLocalPluginsModel struct {
 type riskVirusTotalModel struct {
 	Enabled         types.Bool   `tfsdk:"enabled"`
 	ApiKey          types.String `tfsdk:"api_key"`
+	ApiKeyWo        types.String `tfsdk:"api_key_wo"`
 	CacheTtl        types.String `tfsdk:"cache_ttl"`
 	NumCacheEntries types.Int64  `tfsdk:"num_cache_entries"`
 	ExcludeEngines  types.List   `tfsdk:"exclude_engines"`
@@ -65,6 +69,7 @@ type riskReversingLabsModel struct {
 	Enabled         types.Bool   `tfsdk:"enabled"`
 	Username        types.String `tfsdk:"username"`
 	Password        types.String `tfsdk:"password"`
+	PasswordWo      types.String `tfsdk:"password_wo"`
 	CacheTtl        types.String `tfsdk:"cache_ttl"`
 	NumCacheEntries types.Int64  `tfsdk:"num_cache_entries"`
 	FilterExpr      types.String `tfsdk:"filter_expr"`
@@ -92,18 +97,21 @@ type riskRemotePluginModel struct {
 	Headers    types.List   `tfsdk:"headers"`
 	Ttl        types.String `tfsdk:"ttl"`
 	Secret     types.String `tfsdk:"secret"`
+	SecretWo   types.String `tfsdk:"secret_wo"`
 	FilterExpr types.String `tfsdk:"filter_expr"`
 }
 
 type riskHttpHeaderModel struct {
-	Key   types.String `tfsdk:"key"`
-	Value types.String `tfsdk:"value"`
+	Key     types.String `tfsdk:"key"`
+	Value   types.String `tfsdk:"value"`
+	ValueWo types.String `tfsdk:"value_wo"`
 }
 
 var (
 	riskVirusTotalAttrTypes = map[string]attr.Type{
 		"enabled":           types.BoolType,
 		"api_key":           types.StringType,
+		"api_key_wo":        types.StringType,
 		"cache_ttl":         types.StringType,
 		"num_cache_entries": types.Int64Type,
 		"exclude_engines":   types.ListType{ElemType: types.StringType},
@@ -115,6 +123,7 @@ var (
 		"enabled":           types.BoolType,
 		"username":          types.StringType,
 		"password":          types.StringType,
+		"password_wo":       types.StringType,
 		"cache_ttl":         types.StringType,
 		"num_cache_entries": types.Int64Type,
 		"filter_expr":       types.StringType,
@@ -143,8 +152,9 @@ var (
 	}
 
 	riskHttpHeaderAttrTypes = map[string]attr.Type{
-		"key":   types.StringType,
-		"value": types.StringType,
+		"key":      types.StringType,
+		"value":    types.StringType,
+		"value_wo": types.StringType,
 	}
 	riskHttpHeaderObjectType = types.ObjectType{AttrTypes: riskHttpHeaderAttrTypes}
 
@@ -157,6 +167,7 @@ var (
 		"headers":     types.ListType{ElemType: riskHttpHeaderObjectType},
 		"ttl":         types.StringType,
 		"secret":      types.StringType,
+		"secret_wo":   types.StringType,
 		"filter_expr": types.StringType,
 	}
 	riskRemotePluginObjectType = types.ObjectType{AttrTypes: riskRemotePluginAttrTypes}
@@ -169,8 +180,9 @@ func (r *RiskEngineSettingsResource) Metadata(ctx context.Context, req resource.
 func (r *RiskEngineSettingsResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	headerNested := schema.NestedAttributeObject{
 		Attributes: map[string]schema.Attribute{
-			"key":   schema.StringAttribute{Required: true, MarkdownDescription: "HTTP header name."},
-			"value": schema.StringAttribute{Required: true, Sensitive: true, MarkdownDescription: "HTTP header value."},
+			"key":      schema.StringAttribute{Required: true, MarkdownDescription: "HTTP header name."},
+			"value":    headerValueAttribute(),
+			"value_wo": writeOnlySecretAttribute("value", "secrets_wo_version"),
 		},
 	}
 
@@ -185,14 +197,20 @@ func (r *RiskEngineSettingsResource) Schema(ctx context.Context, req resource.Sc
 
 	remotePluginNested := schema.NestedAttributeObject{
 		Attributes: map[string]schema.Attribute{
-			"enabled":     schema.BoolAttribute{Optional: true, MarkdownDescription: "Whether the plugin is enabled."},
-			"name":        schema.StringAttribute{Optional: true, MarkdownDescription: "Plugin identifier."},
-			"version":     schema.StringAttribute{Optional: true, MarkdownDescription: "Plugin version."},
-			"uuid":        schema.StringAttribute{Optional: true, Computed: true, MarkdownDescription: "UUID for future updates."},
-			"url":         schema.StringAttribute{Optional: true, MarkdownDescription: "URL of the plugin server."},
-			"headers":     schema.ListNestedAttribute{Optional: true, NestedObject: headerNested, MarkdownDescription: "HTTP headers sent to the plugin server."},
-			"ttl":         schema.StringAttribute{Optional: true, MarkdownDescription: "How long a response from the plugin server is valid (Go duration)."},
-			"secret":      schema.StringAttribute{Optional: true, Sensitive: true, MarkdownDescription: "Hex-encoded shared secret for authenticating to the plugin."},
+			"enabled": schema.BoolAttribute{Optional: true, MarkdownDescription: "Whether the plugin is enabled."},
+			"name":    schema.StringAttribute{Optional: true, MarkdownDescription: "Plugin identifier."},
+			"version": schema.StringAttribute{Optional: true, MarkdownDescription: "Plugin version."},
+			"uuid":    schema.StringAttribute{Optional: true, Computed: true, MarkdownDescription: "UUID for future updates."},
+			"url":     schema.StringAttribute{Optional: true, MarkdownDescription: "URL of the plugin server."},
+			"headers": schema.ListNestedAttribute{Optional: true, NestedObject: headerNested, MarkdownDescription: "HTTP headers sent to the plugin server."},
+			"ttl":     schema.StringAttribute{Optional: true, MarkdownDescription: "How long a response from the plugin server is valid (Go duration)."},
+			"secret": schema.StringAttribute{
+				Optional:            true,
+				Sensitive:           true,
+				MarkdownDescription: "Hex-encoded shared secret for the plugin. Stored in state. Conflicts with `secret_wo`.",
+				DeprecationMessage:  "Use secret_wo.",
+			},
+			"secret_wo":   writeOnlySecretAttribute("secret", "secrets_wo_version"),
 			"filter_expr": schema.StringAttribute{Optional: true, MarkdownDescription: "CEL expression evaluated before invoking the plugin. Empty = always run."},
 		},
 	}
@@ -218,9 +236,15 @@ func (r *RiskEngineSettingsResource) Schema(ctx context.Context, req resource.Sc
 						Optional:            true,
 						MarkdownDescription: "VirusTotal plugin settings.",
 						Attributes: map[string]schema.Attribute{
-							"enabled":   schema.BoolAttribute{Optional: true},
-							"api_key":   schema.StringAttribute{Optional: true, Sensitive: true},
-							"cache_ttl": schema.StringAttribute{Optional: true, MarkdownDescription: "Cache TTL as a Go duration."},
+							"enabled": schema.BoolAttribute{Optional: true},
+							"api_key": schema.StringAttribute{
+								Optional:            true,
+								Sensitive:           true,
+								MarkdownDescription: "VirusTotal API key. Stored in state. Conflicts with `api_key_wo`.",
+								DeprecationMessage:  "Use api_key_wo.",
+							},
+							"api_key_wo": writeOnlySecretAttribute("api_key", "secrets_wo_version"),
+							"cache_ttl":  schema.StringAttribute{Optional: true, MarkdownDescription: "Cache TTL as a Go duration."},
 							"num_cache_entries": schema.Int64Attribute{
 								Optional:            true,
 								MarkdownDescription: "Number of cache entries (0-50,000).",
@@ -234,10 +258,16 @@ func (r *RiskEngineSettingsResource) Schema(ctx context.Context, req resource.Sc
 						Optional:            true,
 						MarkdownDescription: "ReversingLabs plugin settings.",
 						Attributes: map[string]schema.Attribute{
-							"enabled":   schema.BoolAttribute{Optional: true},
-							"username":  schema.StringAttribute{Optional: true},
-							"password":  schema.StringAttribute{Optional: true, Sensitive: true},
-							"cache_ttl": schema.StringAttribute{Optional: true, MarkdownDescription: "Cache TTL as a Go duration."},
+							"enabled":  schema.BoolAttribute{Optional: true},
+							"username": schema.StringAttribute{Optional: true},
+							"password": schema.StringAttribute{
+								Optional:            true,
+								Sensitive:           true,
+								MarkdownDescription: "ReversingLabs password. Stored in state. Conflicts with `password_wo`.",
+								DeprecationMessage:  "Use password_wo.",
+							},
+							"password_wo": writeOnlySecretAttribute("password", "secrets_wo_version"),
+							"cache_ttl":   schema.StringAttribute{Optional: true, MarkdownDescription: "Cache TTL as a Go duration."},
 							"num_cache_entries": schema.Int64Attribute{
 								Optional:            true,
 								MarkdownDescription: "Number of cache entries (0-50,000).",
@@ -267,6 +297,7 @@ func (r *RiskEngineSettingsResource) Schema(ctx context.Context, req resource.Sc
 				Description:         "When true, the risk engine only evaluates blockables reported by BLOCK_UNKNOWN events. Blockables seen only via ALLOW_UNKNOWN (monitor mode) events are skipped by the event pipeline and by the refresh cron. Evaluation still happens on demand when an approval is requested.",
 				MarkdownDescription: "When true, the risk engine only evaluates blockables reported by `BLOCK_UNKNOWN` events. Blockables seen only via `ALLOW_UNKNOWN` (monitor mode) events are skipped by the event pipeline and by the refresh cron. Evaluation still happens on demand when an approval is requested.",
 			},
+			"secrets_wo_version": writeOnlyVersionAttribute("new `api_key_wo`, `password_wo`, plugin `secret_wo` and header `value_wo` values"),
 		},
 	}
 }
@@ -287,19 +318,14 @@ func (r *RiskEngineSettingsResource) Configure(ctx context.Context, req resource
 	r.client = pd.Client
 }
 
-// fetchRiskEngineSettings reads the current server-side settings so
-// authoritative values can be written to Terraform state after a Create or
-// Update. Required because uuid is Optional+Computed on both blockable_rules
-// rules and remote_plugins: the plan carries an unknown for every entry the
-// user did not pin, and the proto requires that the server-assigned UUID be
-// echoed back on later writes to keep rule identity stable.
-func (r *RiskEngineSettingsResource) fetchRiskEngineSettings(ctx context.Context, diags *diag.Diagnostics) (RiskEngineSettingsResourceModel, bool) {
+// Fetch assigned UUIDs for entries whose planned UUIDs were unknown.
+func (r *RiskEngineSettingsResource) fetchRiskEngineSettings(ctx context.Context, prior RiskEngineSettingsResourceModel, diags *diag.Diagnostics) (RiskEngineSettingsResourceModel, bool) {
 	ret, err := r.client.GetRiskEngineSettings(ctx, apipb.GetRiskEngineSettingsRequest_builder{}.Build())
 	if err != nil {
 		diags.AddError("Client Error", fmt.Sprintf("Failed to get risk engine settings: %v", err))
 		return RiskEngineSettingsResourceModel{}, false
 	}
-	data, d := riskEngineProtoToModel(ctx, ret.GetRiskEngineSettings())
+	data, d := riskEngineProtoToModel(ctx, ret.GetRiskEngineSettings(), prior)
 	diags.Append(d...)
 	if diags.HasError() {
 		return RiskEngineSettingsResourceModel{}, false
@@ -314,7 +340,7 @@ func (r *RiskEngineSettingsResource) Create(ctx context.Context, req resource.Cr
 		return
 	}
 
-	settings, d := riskEngineModelToProto(ctx, &data)
+	settings, d := riskEngineForWrite(ctx, &data, req.Config)
 	resp.Diagnostics.Append(d...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -325,7 +351,7 @@ func (r *RiskEngineSettingsResource) Create(ctx context.Context, req resource.Cr
 		return
 	}
 
-	final, ok := r.fetchRiskEngineSettings(ctx, &resp.Diagnostics)
+	final, ok := r.fetchRiskEngineSettings(ctx, data, &resp.Diagnostics)
 	if !ok {
 		return
 	}
@@ -337,7 +363,12 @@ func (r *RiskEngineSettingsResource) Create(ctx context.Context, req resource.Cr
 }
 
 func (r *RiskEngineSettingsResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
-	data, ok := r.fetchRiskEngineSettings(ctx, &resp.Diagnostics)
+	var prior RiskEngineSettingsResourceModel
+	resp.Diagnostics.Append(req.State.Get(ctx, &prior)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	data, ok := r.fetchRiskEngineSettings(ctx, prior, &resp.Diagnostics)
 	if !ok {
 		return
 	}
@@ -353,9 +384,7 @@ func (r *RiskEngineSettingsResource) Update(ctx context.Context, req resource.Up
 		return
 	}
 
-	// UpdateRiskEngineSettings replaces the whole RiskEngineSettings message;
-	// it is not presence-sensitive, so we always send the full plan.
-	settings, d := riskEngineModelToProto(ctx, &plan)
+	settings, d := riskEngineForWrite(ctx, &plan, req.Config)
 	resp.Diagnostics.Append(d...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -366,9 +395,7 @@ func (r *RiskEngineSettingsResource) Update(ctx context.Context, req resource.Up
 		return
 	}
 
-	// Refresh from the server so state carries the server-assigned UUIDs rather
-	// than the plan's unknowns.
-	final, ok := r.fetchRiskEngineSettings(ctx, &resp.Diagnostics)
+	final, ok := r.fetchRiskEngineSettings(ctx, plan, &resp.Diagnostics)
 	if !ok {
 		return
 	}
@@ -385,8 +412,9 @@ func (r *RiskEngineSettingsResource) Delete(ctx context.Context, req resource.De
 
 func (r *RiskEngineSettingsResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resp.Diagnostics.Append(resp.State.Set(ctx, &RiskEngineSettingsResourceModel{
-		LocalPlugins:  types.ObjectNull(riskLocalPluginsAttrTypes),
-		RemotePlugins: types.ListNull(riskRemotePluginObjectType),
+		LocalPlugins:     types.ObjectNull(riskLocalPluginsAttrTypes),
+		RemotePlugins:    types.ListNull(riskRemotePluginObjectType),
+		SecretsWoVersion: types.StringNull(),
 	})...)
 }
 
@@ -400,21 +428,20 @@ func (r *RiskEngineSettingsResource) IdentitySchema(ctx context.Context, req res
 	}
 }
 
-// --- proto/model conversion ---
-
-func riskEngineProtoToModel(ctx context.Context, s *apipb.RiskEngineSettings) (RiskEngineSettingsResourceModel, diag.Diagnostics) {
+func riskEngineProtoToModel(ctx context.Context, s *apipb.RiskEngineSettings, prior RiskEngineSettingsResourceModel) (RiskEngineSettingsResourceModel, diag.Diagnostics) {
 	var diags diag.Diagnostics
 	if s == nil {
 		return RiskEngineSettingsResourceModel{
-			LocalPlugins:  types.ObjectNull(riskLocalPluginsAttrTypes),
-			RemotePlugins: types.ListNull(riskRemotePluginObjectType),
+			LocalPlugins:     types.ObjectNull(riskLocalPluginsAttrTypes),
+			RemotePlugins:    types.ListNull(riskRemotePluginObjectType),
+			SecretsWoVersion: prior.SecretsWoVersion,
 		}, nil
 	}
 
-	local, d := riskLocalPluginsProtoToObject(ctx, s.GetLocalPlugins())
+	local, d := riskLocalPluginsProtoToObject(ctx, s.GetLocalPlugins(), prior.LocalPlugins)
 	diags.Append(d...)
 
-	remote, d := riskRemotePluginsProtoToList(ctx, s.GetRemotePlugins())
+	remote, d := riskRemotePluginsProtoToList(ctx, s.GetRemotePlugins(), prior.RemotePlugins)
 	diags.Append(d...)
 
 	return RiskEngineSettingsResourceModel{
@@ -423,7 +450,46 @@ func riskEngineProtoToModel(ctx context.Context, s *apipb.RiskEngineSettings) (R
 		LocalPlugins:              local,
 		RemotePlugins:             remote,
 		OnlyEvaluateBlockedEvents: boolPtrToTF(s.OnlyEvaluateBlockedEvents),
+		SecretsWoVersion:          prior.SecretsWoVersion,
 	}, diags
+}
+
+func riskEngineForWrite(ctx context.Context, plan *RiskEngineSettingsResourceModel, config tfsdk.Config) (*apipb.RiskEngineSettings, diag.Diagnostics) {
+	// Config omits computed UUIDs; overlay only secrets onto the planned request.
+	settings, diags := riskEngineModelToProto(ctx, plan)
+	if diags.HasError() {
+		return nil, diags
+	}
+	var cfg RiskEngineSettingsResourceModel
+	diags.Append(config.Get(ctx, &cfg)...)
+	if diags.HasError() {
+		return nil, diags
+	}
+
+	configured, d := riskEngineModelToProto(ctx, &cfg)
+	diags.Append(d...)
+	if diags.HasError() {
+		return nil, diags
+	}
+	if vt := settings.GetLocalPlugins().GetVirusTotal(); vt != nil {
+		vt.ApiKey = configured.GetLocalPlugins().GetVirusTotal().ApiKey
+	}
+	if rl := settings.GetLocalPlugins().GetReversingLabs(); rl != nil {
+		rl.Password = configured.GetLocalPlugins().GetReversingLabs().Password
+	}
+	for i, p := range settings.GetRemotePlugins() {
+		if i >= len(configured.GetRemotePlugins()) {
+			break
+		}
+		configPlugin := configured.GetRemotePlugins()[i]
+		p.Secret = configPlugin.Secret
+		for j, h := range p.GetHeaders() {
+			if j < len(configPlugin.GetHeaders()) {
+				h.SetValue(configPlugin.GetHeaders()[j].GetValue())
+			}
+		}
+	}
+	return settings, diags
 }
 
 func riskEngineModelToProto(ctx context.Context, m *RiskEngineSettingsResourceModel) (*apipb.RiskEngineSettings, diag.Diagnostics) {
@@ -454,15 +520,15 @@ func riskEngineModelToProto(ctx context.Context, m *RiskEngineSettingsResourceMo
 	}.Build(), diags
 }
 
-func riskLocalPluginsProtoToObject(ctx context.Context, lp *apipb.LocalPluginSettings) (types.Object, diag.Diagnostics) {
+func riskLocalPluginsProtoToObject(ctx context.Context, lp *apipb.LocalPluginSettings, prior types.Object) (types.Object, diag.Diagnostics) {
 	if lp == nil {
 		return types.ObjectNull(riskLocalPluginsAttrTypes), nil
 	}
 	var diags diag.Diagnostics
 
-	vt, d := riskVirusTotalProtoToObject(ctx, lp.GetVirusTotal())
+	vt, d := riskVirusTotalProtoToObject(ctx, lp.GetVirusTotal(), prior)
 	diags.Append(d...)
-	rl, d := riskReversingLabsProtoToObject(ctx, lp.GetReversingLabs())
+	rl, d := riskReversingLabsProtoToObject(ctx, lp.GetReversingLabs(), prior)
 	diags.Append(d...)
 	br, d := riskBlockableRulesProtoToObject(ctx, lp.GetBlockableRules())
 	diags.Append(d...)
@@ -507,7 +573,7 @@ func riskLocalPluginsObjectToProto(ctx context.Context, obj types.Object) (*apip
 	}.Build(), diags
 }
 
-func riskVirusTotalProtoToObject(ctx context.Context, p *apipb.VirusTotalPluginSettings) (types.Object, diag.Diagnostics) {
+func riskVirusTotalProtoToObject(ctx context.Context, p *apipb.VirusTotalPluginSettings, prior types.Object) (types.Object, diag.Diagnostics) {
 	if p == nil {
 		return types.ObjectNull(riskVirusTotalAttrTypes), nil
 	}
@@ -520,7 +586,8 @@ func riskVirusTotalProtoToObject(ctx context.Context, p *apipb.VirusTotalPluginS
 	}
 	obj, d := types.ObjectValue(riskVirusTotalAttrTypes, map[string]attr.Value{
 		"enabled":           boolPtrToTF(p.Enabled),
-		"api_key":           stringPtrToTF(p.ApiKey),
+		"api_key":           priorLocalSecret(prior, "virus_total", "api_key"),
+		"api_key_wo":        types.StringNull(),
 		"cache_ttl":         durationToTFString(p.GetCacheTtl()),
 		"num_cache_entries": uint32PtrToTFInt64(p.NumCacheEntries),
 		"exclude_engines":   excludeEngines,
@@ -556,7 +623,7 @@ func riskVirusTotalObjectToProto(ctx context.Context, obj types.Object) (*apipb.
 
 	return apipb.VirusTotalPluginSettings_builder{
 		Enabled:         tfBoolToPtr(m.Enabled),
-		ApiKey:          tfStringToPtr(m.ApiKey),
+		ApiKey:          withWriteOnly(tfStringToPtr(m.ApiKey), m.ApiKeyWo),
 		CacheTtl:        cacheTtl,
 		NumCacheEntries: tfInt64ToUint32Ptr(m.NumCacheEntries),
 		ExcludeEngines:  engines,
@@ -564,14 +631,15 @@ func riskVirusTotalObjectToProto(ctx context.Context, obj types.Object) (*apipb.
 	}.Build(), d
 }
 
-func riskReversingLabsProtoToObject(ctx context.Context, p *apipb.ReversingLabsPluginSettings) (types.Object, diag.Diagnostics) {
+func riskReversingLabsProtoToObject(ctx context.Context, p *apipb.ReversingLabsPluginSettings, prior types.Object) (types.Object, diag.Diagnostics) {
 	if p == nil {
 		return types.ObjectNull(riskReversingLabsAttrTypes), nil
 	}
 	obj, diags := types.ObjectValue(riskReversingLabsAttrTypes, map[string]attr.Value{
 		"enabled":           boolPtrToTF(p.Enabled),
 		"username":          stringPtrToTF(p.Username),
-		"password":          stringPtrToTF(p.Password),
+		"password":          priorLocalSecret(prior, "reversing_labs", "password"),
+		"password_wo":       types.StringNull(),
 		"cache_ttl":         durationToTFString(p.GetCacheTtl()),
 		"num_cache_entries": uint32PtrToTFInt64(p.NumCacheEntries),
 		"filter_expr":       emptyStringToNull(p.GetFilterExpr()),
@@ -598,7 +666,7 @@ func riskReversingLabsObjectToProto(ctx context.Context, obj types.Object) (*api
 	return apipb.ReversingLabsPluginSettings_builder{
 		Enabled:         tfBoolToPtr(m.Enabled),
 		Username:        tfStringToPtr(m.Username),
-		Password:        tfStringToPtr(m.Password),
+		Password:        withWriteOnly(tfStringToPtr(m.Password), m.PasswordWo),
 		CacheTtl:        cacheTtl,
 		NumCacheEntries: tfInt64ToUint32Ptr(m.NumCacheEntries),
 		FilterExpr:      m.FilterExpr.ValueString(),
@@ -674,7 +742,7 @@ func riskBlockableRulesObjectToProto(ctx context.Context, obj types.Object) (*ap
 	}.Build(), d
 }
 
-func riskRemotePluginsProtoToList(ctx context.Context, plugins []*apipb.RemoteRiskEnginePluginSettings) (types.List, diag.Diagnostics) {
+func riskRemotePluginsProtoToList(ctx context.Context, plugins []*apipb.RemoteRiskEnginePluginSettings, prior types.List) (types.List, diag.Diagnostics) {
 	if len(plugins) == 0 {
 		return types.ListNull(riskRemotePluginObjectType), nil
 	}
@@ -682,6 +750,7 @@ func riskRemotePluginsProtoToList(ctx context.Context, plugins []*apipb.RemoteRi
 	var diags diag.Diagnostics
 	values := make([]attr.Value, len(plugins))
 	for i, p := range plugins {
+		previous := priorRemotePlugin(i, plugins, prior)
 		headers := p.GetHeaders()
 		var headerList types.List
 		if len(headers) == 0 {
@@ -690,8 +759,9 @@ func riskRemotePluginsProtoToList(ctx context.Context, plugins []*apipb.RemoteRi
 			hvalues := make([]attr.Value, len(headers))
 			for j, h := range headers {
 				hobj, d := types.ObjectValue(riskHttpHeaderAttrTypes, map[string]attr.Value{
-					"key":   types.StringValue(h.GetKey()),
-					"value": types.StringValue(h.GetValue()),
+					"key":      types.StringValue(h.GetKey()),
+					"value":    priorHeaderValue(j, headers, priorHeaders(previous)),
+					"value_wo": types.StringNull(),
 				})
 				diags.Append(d...)
 				hvalues[j] = hobj
@@ -709,7 +779,8 @@ func riskRemotePluginsProtoToList(ctx context.Context, plugins []*apipb.RemoteRi
 			"url":         stringPtrToTF(p.Url),
 			"headers":     headerList,
 			"ttl":         durationToTFString(p.GetTtl()),
-			"secret":      stringPtrToTF(p.Secret),
+			"secret":      priorString(previous, "secret"),
+			"secret_wo":   types.StringNull(),
 			"filter_expr": emptyStringToNull(p.GetFilterExpr()),
 		})
 		diags.Append(d...)
@@ -752,7 +823,7 @@ func riskRemotePluginsListToProto(ctx context.Context, list types.List) ([]*apip
 			for j, hm := range hms {
 				headers[j] = apipb.HTTPHeader_builder{
 					Key:   hm.Key.ValueString(),
-					Value: hm.Value.ValueString(),
+					Value: cmp.Or(hm.ValueWo.ValueString(), hm.Value.ValueString()),
 				}.Build()
 			}
 		}
@@ -765,7 +836,7 @@ func riskRemotePluginsListToProto(ctx context.Context, list types.List) ([]*apip
 			Url:        tfStringToPtr(m.Url),
 			Headers:    headers,
 			Ttl:        ttl,
-			Secret:     tfStringToPtr(m.Secret),
+			Secret:     withWriteOnly(tfStringToPtr(m.Secret), m.SecretWo),
 			FilterExpr: m.FilterExpr.ValueString(),
 		}.Build()
 	}
@@ -781,4 +852,55 @@ func emptyStringToNull(s string) types.String {
 		return types.StringNull()
 	}
 	return types.StringValue(s)
+}
+
+// Match by UUID, then by position for a plan's unknown UUIDs (Workshop keeps the
+// order), then a UUID-less prior entry by a URL unique on both sides.
+func priorRemotePlugin(i int, plugins []*apipb.RemoteRiskEnginePluginSettings, prior types.List) types.Object {
+	p := plugins[i]
+	elements := prior.Elements()
+	for _, element := range elements {
+		candidate := element.(types.Object)
+		if id := priorString(candidate, "uuid").ValueString(); id != "" && id == p.GetUuid() {
+			return candidate
+		}
+	}
+	if i < len(elements) {
+		if candidate := elements[i].(types.Object); priorString(candidate, "uuid").IsUnknown() {
+			return candidate
+		}
+	}
+
+	none := types.ObjectNull(riskRemotePluginAttrTypes)
+	url := p.GetUrl()
+	if url == "" {
+		return none
+	}
+	for j, other := range plugins {
+		if j != i && other.GetUrl() == url {
+			return none
+		}
+	}
+	match := none
+	for _, element := range elements {
+		candidate := element.(types.Object)
+		if priorString(candidate, "url").ValueString() != url {
+			continue
+		}
+		if !match.IsNull() {
+			return none
+		}
+		match = candidate
+	}
+	if id := priorString(match, "uuid"); id.IsUnknown() || id.ValueString() != "" {
+		return none
+	}
+	return match
+}
+
+func priorLocalSecret(prior types.Object, plugin, key string) types.String {
+	if object, ok := prior.Attributes()[plugin].(types.Object); ok {
+		return priorString(object, key)
+	}
+	return types.StringNull()
 }
